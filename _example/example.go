@@ -22,6 +22,15 @@ func main() {
 				diskcache.WithTTL(365*24*time.Hour),
 			),
 		),
+		diskcache.WithStripHeaders(
+			"Set-Cookie",
+			"Content-Security-Policy",
+			"Strict-Transport-Security",
+			"Cache-[^:]*",
+			"Vary",
+			"Expect-[^:]*",
+			"X-[^:]*",
+		),
 		diskcache.WithBasicMinifier(true),
 		diskcache.WithGzipCompression(),
 	)

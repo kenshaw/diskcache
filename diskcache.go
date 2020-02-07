@@ -53,6 +53,7 @@ type Cache struct {
 	transport            http.RoundTripper
 	fs                   afero.Fs
 	matchers             []Matcher
+	stripHeaders         []string
 	minifier             Minifier
 	compressDecompressor CompressDecompressor
 }
@@ -99,17 +100,9 @@ func New(opts ...Option) (*Cache, error) {
 
 // RoundTrip satisifies the http.RoundTripper interface.
 func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
-	var key string
-	var ttl time.Duration
-	var err error
-	for _, m := range c.matchers {
-		key, ttl, err = m.Match(req)
-		if err != nil {
-			return nil, err
-		}
-		if key != "" {
-			break
-		}
+	key, ttl, err := c.Match(req)
+	if err != nil {
+		return nil, err
 	}
 
 	var stale bool
@@ -140,11 +133,17 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		defer res.Body.Close()
 
+		// dump and process headers
 		buf, err := httputil.DumpResponse(res, false)
 		if err != nil {
 			return nil, err
 		}
-		buf = bytes.Replace(buf, []byte("\r\nTransfer-Encoding: chunked\r\n"), []byte("\r\n"), -1)
+		for _, h := range append(c.stripHeaders, "Transfer-Encoding") {
+			re := regexp.MustCompile(`(?i)\r\n` + h + `:.+?\r\n`)
+			for re.Match(buf) {
+				buf = re.ReplaceAll(buf, []byte{'\r', '\n'})
+			}
+		}
 
 		// minify body
 		if c.minifier != nil {
@@ -180,6 +179,8 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			buf = b.Bytes()
 		}
+
+		// store
 		if _, err = f.Write(buf); err != nil {
 			return nil, err
 		}
@@ -188,7 +189,7 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 
-	// load existing file
+	// load
 	var r io.Reader
 	r, err = c.fs.OpenFile(key, os.O_RDONLY, 0)
 	if err != nil {
@@ -205,6 +206,34 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	return http.ReadResponse(bufio.NewReader(r), req)
+}
+
+// Match finds the first matching cache policy for the request.
+func (c *Cache) Match(req *http.Request) (string, time.Duration, error) {
+	for _, m := range c.matchers {
+		key, ttl, err := m.Match(req)
+		if err != nil {
+			return "", 0, err
+		}
+		if key != "" {
+			return key, ttl, nil
+		}
+	}
+	return "", 0, nil
+}
+
+// Evict forces a cache eviction (deletion) for the key matching the request.
+func (c *Cache) Evict(req *http.Request) error {
+	key, _, err := c.Match(req)
+	if err != nil {
+		return err
+	}
+	return c.EvictKey(key)
+}
+
+// Evict forces a cache eviction (deletion) of the specified key.
+func (c *Cache) EvictKey(key string) error {
+	return c.fs.Remove(key)
 }
 
 // Option is a disk cache option.
@@ -230,6 +259,17 @@ func WithFs(fs afero.Fs) Option {
 func WithMatchers(matchers ...Matcher) Option {
 	return func(c *Cache) {
 		c.matchers = matchers
+	}
+}
+
+// WithStripHeaders is a disk cache option to set HTTP response headers that
+// are removed from a response prior to storage on disk.
+//
+// Useful for mangling HTTP responses by removing cookies, caching policies,
+// etc.
+func WithStripHeaders(stripHeaders ...string) Option {
+	return func(c *Cache) {
+		c.stripHeaders = stripHeaders
 	}
 }
 
