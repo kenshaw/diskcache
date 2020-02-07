@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"os"
 	"time"
 
 	// "github.com/spf13/afero"
@@ -42,30 +44,40 @@ func main() {
 	cl := &http.Client{
 		Transport: d,
 	}
-	req, err := http.NewRequest("GET", "https://github.com/kenshaw/diskcache", nil)
+
+	for i, urlstr := range []string{
+		"https://github.com/kenshaw/diskcache",      // a path that exists
+		"https://github.com/kenshaw/does-not-exist", // a path that doesn't
+		// repeat
+		"https://github.com/kenshaw/diskcache",
+		"https://github.com/kenshaw/does-not-exist",
+	} {
+		if err := grab(cl, "GET", urlstr, i); err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func grab(cl *http.Client, method, urlstr string, id int) error {
+	req, err := http.NewRequest(method, urlstr, nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// execute request
-	res1, err := cl.Do(req)
+	res, err := cl.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	buf1, err := httputil.DumpResponse(res1, true)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("> req1:\n%s\n\n", string(buf1))
 
-	// repeat request
-	res2, err := cl.Do(req)
+	fmt.Fprintf(os.Stdout, "------------------- %s %s (%d) -------------------\n", method, urlstr, id)
+	buf, err := httputil.DumpResponse(res, true)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	buf2, err := httputil.DumpResponse(res2, true)
-	if err != nil {
-		log.Fatal(err)
+	if _, err = os.Stdout.Write(buf); err != nil {
+		return err
 	}
-	log.Printf("> req2:\n%s\n\n", string(buf2))
+	fmt.Fprintf(os.Stdout, "\n------------------- END %s %s (%d) -------------------\n\n", method, urlstr, id)
+	return nil
 }
