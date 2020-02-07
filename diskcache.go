@@ -323,6 +323,12 @@ type BasicMinifier struct {
 	truncate bool
 }
 
+var (
+	jsContentTypeRE   = regexp.MustCompile("^(application|text)/(x-)?(java|ecma)script$")
+	jsonContentTypeRE = regexp.MustCompile("[/+]json$")
+	xmlContentTypeRE  = regexp.MustCompile("[/+]xml$")
+)
+
 // Minify satisfies the Minifier interface.
 func (m BasicMinifier) Minify(w io.Writer, r io.Reader, urlstr string, code int, contentType string) error {
 	if m.truncate && code != http.StatusOK {
@@ -333,28 +339,37 @@ func (m BasicMinifier) Minify(w io.Writer, r io.Reader, urlstr string, code int,
 		contentType = contentType[:i]
 	}
 
-	switch contentType {
-	case "text/html":
-		u, err := url.Parse(urlstr)
+	switch {
+	default:
+		_, err := io.Copy(w, r)
 		if err != nil {
 			return err
 		}
-		m := minify.New()
-		m.AddFunc("text/html", html.Minify)
-		m.AddFunc("text/css", css.Minify)
-		m.AddFunc("image/svg+xml", svg.Minify)
-		m.AddFuncRegexp(regexp.MustCompile("^(application|text)/(x-)?(java|ecma)script$"), js.Minify)
-		m.AddFuncRegexp(regexp.MustCompile("[/+]json$"), json.Minify)
-		m.AddFuncRegexp(regexp.MustCompile("[/+]xml$"), xml.Minify)
-		m.URL = u
-		return m.Minify("text/html", w, r)
+		return nil
+
+	case contentType == "text/html",
+		contentType == "text/css",
+		contentType == "image/svg+xml",
+		jsContentTypeRE.MatchString(contentType),
+		jsonContentTypeRE.MatchString(contentType),
+		xmlContentTypeRE.MatchString(contentType):
 	}
 
-	_, err := io.Copy(w, r)
-	if err != nil {
-		return err
+	z := minify.New()
+	z.AddFunc("text/html", html.Minify)
+	z.AddFunc("text/css", css.Minify)
+	z.AddFunc("image/svg+xml", svg.Minify)
+	z.AddFuncRegexp(jsContentTypeRE, js.Minify)
+	z.AddFuncRegexp(jsonContentTypeRE, json.Minify)
+	z.AddFuncRegexp(xmlContentTypeRE, xml.Minify)
+	if contentType == "text/html" {
+		var err error
+		z.URL, err = url.Parse(urlstr)
+		if err != nil {
+			return err
+		}
 	}
-	return nil
+	return z.Minify(contentType, w, r)
 }
 
 // GzipCompressDecompressor is a gzip compressor/decompressor.
