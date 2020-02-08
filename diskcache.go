@@ -51,6 +51,8 @@ type CompressDecompressor interface {
 // Cache is a http.RoundTripper compatible disk cache.
 type Cache struct {
 	transport            http.RoundTripper
+	dirMode              os.FileMode
+	fileMode             os.FileMode
 	fs                   afero.Fs
 	matchers             []Matcher
 	stripHeaders         []string
@@ -63,7 +65,7 @@ type Cache struct {
 // By default, the cache path will be <working directory>/cache. Change
 // location using Options.
 func New(opts ...Option) (*Cache, error) {
-	c := new(Cache)
+	c := &Cache{dirMode: 0755, fileMode: 0644}
 	for _, o := range opts {
 		if err := o(c); err != nil {
 			return nil, err
@@ -76,21 +78,7 @@ func New(opts ...Option) (*Cache, error) {
 		if err != nil {
 			return nil, err
 		}
-		// ensure cacheDir exists and is directory
-		cacheDir := filepath.Join(dir, "cache")
-		fi, err := os.Stat(cacheDir)
-		switch {
-		case err != nil && os.IsNotExist(err):
-			if err = os.MkdirAll(cacheDir, 0755); err != nil {
-				return nil, err
-			}
-		case err != nil:
-			return nil, err
-		case err == nil && !fi.IsDir():
-			return nil, fmt.Errorf("%s is not a directory", cacheDir)
-		}
-
-		if err = WithBasePathFs(cacheDir)(c); err != nil {
+		if err = WithBasePathFs(filepath.Join(dir, "cache"))(c); err != nil {
 			return nil, err
 		}
 	}
@@ -161,12 +149,12 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		// ensure path exists
-		if err = c.fs.MkdirAll(path.Dir(key), 0755); err != nil {
+		if err = c.fs.MkdirAll(path.Dir(key), c.dirMode); err != nil {
 			return nil, err
 		}
 
 		// open cache file
-		f, err := c.fs.OpenFile(key, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		f, err := c.fs.OpenFile(key, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, c.fileMode)
 		if err != nil {
 			return nil, err
 		}
@@ -247,6 +235,15 @@ func WithTransport(transport http.RoundTripper) Option {
 	}
 }
 
+// WithMode is a disk cache option to set the file mode used when creating
+// files and directories on disk.
+func WithMode(dirMode, fileMode os.FileMode) Option {
+	return func(c *Cache) error {
+		c.dirMode, c.fileMode = dirMode, fileMode
+		return nil
+	}
+}
+
 // WithFs is a disk cache option to set the Afero filesystem used.
 //
 // See: github.com/spf13/afero
@@ -261,7 +258,19 @@ func WithFs(fs afero.Fs) Option {
 // Afero BasePathFs.
 func WithBasePathFs(basePath string) Option {
 	return func(c *Cache) error {
-		var err error
+		// ensure path exists and is directory
+		fi, err := os.Stat(basePath)
+		switch {
+		case err != nil && os.IsNotExist(err):
+			if err = os.MkdirAll(basePath, c.dirMode); err != nil {
+				return err
+			}
+		case err != nil:
+			return err
+		case err == nil && !fi.IsDir():
+			return fmt.Errorf("%s is not a directory", basePath)
+		}
+
 		// resolve real path
 		basePath, err = realpath.Realpath(basePath)
 		if err != nil {
