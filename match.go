@@ -2,6 +2,7 @@ package diskcache
 
 import (
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ type SimpleMatch struct {
 	pathSubexps []string
 	key         string
 	ttl         time.Duration
+	queryEscape bool
 }
 
 // Match creates a new simple match for the provided method, host, path, and
@@ -68,6 +70,9 @@ func (m *SimpleMatch) Match(req *http.Request) (string, time.Duration, error) {
 		}
 		pairs = append(pairs, "{{"+m.pathSubexps[i]+"}}", p[i])
 	}
+	if m.queryEscape {
+		pairs = append(pairs, "{{query}}", url.QueryEscape(req.URL.Query().Encode()))
+	}
 	key := strings.NewReplacer(pairs...).Replace(m.key)
 	return strings.TrimSuffix(fixRE.ReplaceAllString(key, "/"), "/"), m.ttl, nil
 }
@@ -79,5 +84,12 @@ type MatchOption func(*SimpleMatch)
 func WithTTL(ttl time.Duration) MatchOption {
 	return func(m *SimpleMatch) {
 		m.ttl = ttl
+	}
+}
+
+// WithQueryEscape is a simple match option to toggle escaping the query on rewritten URLs.
+func WithQueryEscape() MatchOption {
+	return func(m *SimpleMatch) {
+		m.queryEscape = true
 	}
 }
