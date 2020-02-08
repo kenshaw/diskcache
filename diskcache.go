@@ -65,7 +65,9 @@ type Cache struct {
 func New(opts ...Option) (*Cache, error) {
 	c := new(Cache)
 	for _, o := range opts {
-		o(c)
+		if err := o(c); err != nil {
+			return nil, err
+		}
 	}
 
 	// set default fs as overlay at <working directory>/cache
@@ -87,12 +89,10 @@ func New(opts ...Option) (*Cache, error) {
 		case err == nil && !fi.IsDir():
 			return nil, fmt.Errorf("%s is not a directory", cacheDir)
 		}
-		// resolve real path
-		cacheDir, err = realpath.Realpath(cacheDir)
-		if err != nil {
+
+		if err = WithBasePathFs(cacheDir)(c); err != nil {
 			return nil, err
 		}
-		c.fs = afero.NewBasePathFs(afero.NewOsFs(), cacheDir)
 	}
 
 	return c, nil
@@ -237,12 +237,13 @@ func (c *Cache) EvictKey(key string) error {
 }
 
 // Option is a disk cache option.
-type Option func(*Cache)
+type Option func(*Cache) error
 
 // WithTransport is a disk cache option to set the underlying HTTP transport.
 func WithTransport(transport http.RoundTripper) Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.transport = transport
+		return nil
 	}
 }
 
@@ -250,15 +251,32 @@ func WithTransport(transport http.RoundTripper) Option {
 //
 // See: github.com/spf13/afero
 func WithFs(fs afero.Fs) Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.fs = fs
+		return nil
+	}
+}
+
+// WithBasePathFs is a disk cache option to set the Afero filesystem as an
+// Afero BasePathFs.
+func WithBasePathFs(basePath string) Option {
+	return func(c *Cache) error {
+		var err error
+		// resolve real path
+		basePath, err = realpath.Realpath(basePath)
+		if err != nil {
+			return err
+		}
+		c.fs = afero.NewBasePathFs(afero.NewOsFs(), basePath)
+		return nil
 	}
 }
 
 // WithMatchers is a disk cache option to set the matchers used.
 func WithMatchers(matchers ...Matcher) Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.matchers = matchers
+		return nil
 	}
 }
 
@@ -268,8 +286,9 @@ func WithMatchers(matchers ...Matcher) Option {
 // Useful for mangling HTTP responses by removing cookies, caching policies,
 // etc.
 func WithStripHeaders(stripHeaders ...string) Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.stripHeaders = stripHeaders
+		return nil
 	}
 }
 
@@ -277,8 +296,9 @@ func WithStripHeaders(stripHeaders ...string) Option {
 //
 // See: github.com/tdewolff/minify/http for out-of-the box compatible http minifier.
 func WithMinifier(minifier Minifier) Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.minifier = minifier
+		return nil
 	}
 }
 
@@ -289,32 +309,36 @@ func WithMinifier(minifier Minifier) Option {
 //
 // Builds a basic text/html minifier using github.com/tdewolff/minify.
 func WithBasicMinifier(truncate bool) Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.minifier = BasicMinifier{truncate: truncate}
+		return nil
 	}
 }
 
 // WithCompressDecompressor is a disk cache option to set a compression
 // handler.
 func WithCompressDecompressor(compressDecompressor CompressDecompressor) Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.compressDecompressor = compressDecompressor
+		return nil
 	}
 }
 
 // WithGzipCompression is a disk cache option that stores/retrieves using gzip
 // compression.
 func WithGzipCompression() Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.compressDecompressor = GzipCompressDecompressor{Level: gzip.DefaultCompression}
+		return nil
 	}
 }
 
 // WithZlibCompression is a disk cache option that stores/retrieves using zlib
 // compression.
 func WithZlibCompression() Option {
-	return func(c *Cache) {
+	return func(c *Cache) error {
 		c.compressDecompressor = ZlibCompressDecompressor{Level: zlib.DefaultCompression}
+		return nil
 	}
 }
 
