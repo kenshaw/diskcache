@@ -93,6 +93,15 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
+	// no disk caching policy available
+	if key == "" {
+		transport := c.transport
+		if transport == nil {
+			transport = http.DefaultTransport
+		}
+		return transport.RoundTrip(req)
+	}
+
 	var stale bool
 	fi, err := c.fs.Stat(key)
 	switch {
