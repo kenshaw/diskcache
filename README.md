@@ -112,7 +112,7 @@ simple/reusable ways to rewrite paths on disk.
 `diskcache` was born out of general experimentation and necessity to control
 retention and path rewriting policies on a per-method, per-host, and per-path
 basis. To that end, I have made `diskcache` public in case it is helpful to
-other people/projects
+other people/projects.
 
 It is my full intention to support `diskcache` and continue to add features,
 resiliency, and robustness comparable to `httpcache` (just with more
