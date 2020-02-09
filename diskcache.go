@@ -1,3 +1,12 @@
+// Package diskcache provides a http.RoundTripper implementation that can
+// minify, compress, and cache URLs retrieved using a standard http.Client on
+// disk based on custom matching, retention, and path rewriting rules.
+//
+// Package diskcache does not aim to work as a on-disk HTTP proxy -- see
+// github.com/gregjones/httpcache for a different http.RoundTripper
+// implementation that can act as a standard HTTP proxy.
+//
+// Please see _example/example.go for a complete example.
 package diskcache
 
 import (
@@ -135,12 +144,7 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, h := range append(c.stripHeaders, "Transfer-Encoding") {
-			re := regexp.MustCompile(`(?i)\r\n` + h + `:.+?\r\n`)
-			for re.Match(buf) {
-				buf = re.ReplaceAll(buf, []byte{'\r', '\n'})
-			}
-		}
+		buf = stripHeaders(buf, append(c.stripHeaders, "Transfer-Encoding")...)
 
 		// minify body
 		if c.minifier != nil {
@@ -148,7 +152,7 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 			if err = c.minifier.Minify(m, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type")); err != nil {
 				return nil, err
 			}
-			buf = append(buf, m.Bytes()...)
+			buf = append(stripHeaders(buf, "Content-Length"), m.Bytes()...)
 		} else {
 			body, err := ioutil.ReadAll(res.Body)
 			if err != nil {
@@ -473,4 +477,15 @@ func (z ZlibCompressDecompressor) Decompress(w io.Writer, r io.Reader) error {
 	}
 	_, err = io.Copy(w, d)
 	return err
+}
+
+// stripHeaders removes headers from buf.
+func stripHeaders(buf []byte, headers ...string) []byte {
+	for _, h := range headers {
+		re := regexp.MustCompile(`(?i)\r\n` + h + `:.+?\r\n`)
+		for re.Match(buf) {
+			buf = re.ReplaceAll(buf, []byte{'\r', '\n'})
+		}
+	}
+	return buf
 }
