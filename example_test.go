@@ -45,10 +45,7 @@ func ExampleNew() {
 				diskcache.WithQueryEscape(),
 			),
 		),
-		diskcache.WithStripHeaders(
-			"Set-Cookie",
-			"Date",
-		),
+		diskcache.WithHeaderBlacklist("Set-Cookie", "Date"),
 		diskcache.WithBasicMinifier(true),
 		diskcache.WithGzipCompression(),
 	)
