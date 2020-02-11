@@ -25,14 +25,20 @@ func main() {
 				diskcache.WithTTL(365*24*time.Hour),
 			),
 		),
-		diskcache.WithStripHeaders(
-			"Set-Cookie",
-			"Content-Security-Policy",
-			"Strict-Transport-Security",
-			"Cache-[^:]*",
-			"Vary",
-			"Expect-[^:]*",
-			"X-[^:]*",
+		diskcache.WithHeaderWhitelist("Date", "Set-Cookie", "Content-Type"),
+		/*
+			diskcache.WithHeaderBlacklist(
+				"Set-Cookie",
+				"Content-Security-Policy",
+				"Strict-Transport-Security",
+				"Cache-[^:]*",
+				"Vary",
+				"Expect-[^:]*",
+				"X-[^:]*",
+			),
+		*/
+		diskcache.WithHeaderMangler(
+			`Date:(\s+).+?`, `Date:${1}TODAY`,
 		),
 		diskcache.WithBasicMinifier(true),
 		diskcache.WithGzipCompression(),

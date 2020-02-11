@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -57,6 +58,20 @@ type CompressDecompressor interface {
 	Decompress(w io.Writer, r io.Reader) error
 }
 
+// HeaderRewriter is the shared interface for modifying/altering headers prior
+// to storage on disk.
+type HeaderRewriter interface {
+	HeaderRewrite([]byte) []byte
+}
+
+// HeaderRewriteFunc is a header rewriter func.
+type HeaderRewriterFunc func([]byte) []byte
+
+// HeaderRewrite satisifies the HeaderRewriter interface.
+func (f HeaderRewriterFunc) HeaderRewrite(buf []byte) []byte {
+	return f(buf)
+}
+
 // Cache is a http.RoundTripper compatible disk cache.
 type Cache struct {
 	transport            http.RoundTripper
@@ -64,7 +79,7 @@ type Cache struct {
 	fileMode             os.FileMode
 	fs                   afero.Fs
 	matchers             []Matcher
-	stripHeaders         []string
+	headerRewriters      []HeaderRewriter
 	minifier             Minifier
 	compressDecompressor CompressDecompressor
 }
@@ -144,7 +159,10 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		buf = stripHeaders(buf, append(c.stripHeaders, "Transfer-Encoding")...)
+		buf = stripTransferEncodingHeader(buf)
+		for _, hr := range c.headerRewriters {
+			buf = hr.HeaderRewrite(buf)
+		}
 
 		// minify body
 		if c.minifier != nil {
@@ -152,7 +170,7 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 			if err = c.minifier.Minify(m, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type")); err != nil {
 				return nil, err
 			}
-			buf = append(stripHeaders(buf, "Content-Length"), m.Bytes()...)
+			buf = append(stripContentLengthHeader(buf), m.Bytes()...)
 		} else {
 			body, err := ioutil.ReadAll(res.Body)
 			if err != nil {
@@ -281,7 +299,7 @@ func WithBasePathFs(basePath string) Option {
 		case err != nil:
 			return err
 		case err == nil && !fi.IsDir():
-			return fmt.Errorf("%s is not a directory", basePath)
+			return fmt.Errorf("base path %s is not a directory", basePath)
 		}
 
 		// resolve real path
@@ -302,14 +320,49 @@ func WithMatchers(matchers ...Matcher) Option {
 	}
 }
 
-// WithStripHeaders is a disk cache option to set HTTP response headers that
-// are removed from a response prior to storage on disk.
-//
-// Useful for mangling HTTP responses by removing cookies, caching policies,
-// etc.
-func WithStripHeaders(stripHeaders ...string) Option {
+// WithHeaderRewriters is a disk cache option to set the header rewriters used.
+func WithHeaderRewriters(headerRewriters ...HeaderRewriter) Option {
 	return func(c *Cache) error {
-		c.stripHeaders = stripHeaders
+		c.headerRewriters = headerRewriters
+		return nil
+	}
+}
+
+// WithHeaderBlacklist is a disk cache option to set a header rewriter that
+// strips all headers in the blacklist.
+func WithHeaderBlacklist(blacklist ...string) Option {
+	return func(c *Cache) error {
+		headerRewriter, err := stripHeaders(blacklist...)
+		if err != nil {
+			return err
+		}
+		c.headerRewriters = append(c.headerRewriters, headerRewriter)
+		return nil
+	}
+}
+
+// WithHeaderWhitelist is a disk cache option to set a header rewriter that
+// strips any headers not in the whitelist.
+func WithHeaderWhitelist(whitelist ...string) Option {
+	return func(c *Cache) error {
+		headerRewriter, err := keepHeaders(whitelist...)
+		if err != nil {
+			return err
+		}
+		c.headerRewriters = append(c.headerRewriters, headerRewriter)
+		return nil
+	}
+}
+
+// WithHeaderMangler is a disk cache option to set pairs of matching and
+// replacement regexps that modify the header prior to storage on disk.
+func WithHeaderMangler(pairs ...string) Option {
+	return func(c *Cache) error {
+		headerRewriter, err := NewHeaderMangler(pairs...)
+		if err != nil {
+			return err
+		}
+		c.headerRewriters = append(c.headerRewriters, headerRewriter)
 		return nil
 	}
 }
@@ -332,7 +385,7 @@ func WithMinifier(minifier Minifier) Option {
 // Builds a basic text/html minifier using github.com/tdewolff/minify.
 func WithBasicMinifier(truncate bool) Option {
 	return func(c *Cache) error {
-		c.minifier = BasicMinifier{truncate: truncate}
+		c.minifier = BasicMinifier{Truncate: truncate}
 		return nil
 	}
 }
@@ -366,7 +419,7 @@ func WithZlibCompression() Option {
 
 // BasicMinifier is a basic html minifier.
 type BasicMinifier struct {
-	truncate bool
+	Truncate bool
 }
 
 var (
@@ -377,7 +430,7 @@ var (
 
 // Minify satisfies the Minifier interface.
 func (m BasicMinifier) Minify(w io.Writer, r io.Reader, urlstr string, code int, contentType string) error {
-	if m.truncate && code != http.StatusOK {
+	if m.Truncate && code != http.StatusOK {
 		return nil
 	}
 
@@ -479,13 +532,113 @@ func (z ZlibCompressDecompressor) Decompress(w io.Writer, r io.Reader) error {
 	return err
 }
 
-// stripHeaders removes headers from buf.
-func stripHeaders(buf []byte, headers ...string) []byte {
-	for _, h := range headers {
-		re := regexp.MustCompile(`(?i)\r\n` + h + `:.+?\r\n`)
-		for re.Match(buf) {
-			buf = re.ReplaceAll(buf, []byte{'\r', '\n'})
+// HeaderMangler mangles headers matching regexps and replacements.
+type HeaderMangler struct {
+	Regexps []*regexp.Regexp
+	Repls   [][]byte
+}
+
+// NewHeaderMangler creates a new header mangler from the passed matching
+// regexp and replacement pairs.
+func NewHeaderMangler(pairs ...string) (*HeaderMangler, error) {
+	n := len(pairs)
+	if n%2 != 0 {
+		return nil, errors.New("must have matching regexp and replacement pairs")
+	}
+	headers, repls := make([]string, n/2), make([][]byte, n/2)
+	for i := 0; i < n; i += 2 {
+		headers[i/2], repls[i/2] = pairs[i], append([]byte(pairs[i+1]), crlf...)
+	}
+	regexps, err := compileHeaderRegexps(`\r\n`, headers...)
+	if err != nil {
+		return nil, err
+	}
+	return &HeaderMangler{Regexps: regexps, Repls: repls}, nil
+}
+
+// HeaderRewrite satisfies the HeaderRewriter interface.
+func (m *HeaderMangler) HeaderRewrite(buf []byte) []byte {
+	lines := bytes.Split(buf, crlf)
+	for i := 1; i < len(lines)-2; i++ {
+		for j, re := range m.Regexps {
+			line := append(crlf, append(lines[i], crlf...)...)
+			if re.Match(line) {
+				lines[i] = bytes.TrimSuffix(re.ReplaceAll(line, m.Repls[j]), crlf)
+			}
 		}
 	}
-	return buf
+	return bytes.Join(lines, crlf)
+}
+
+// compileHeaderRegexps compiles header regexps.
+func compileHeaderRegexps(suffix string, headers ...string) ([]*regexp.Regexp, error) {
+	var err error
+	regexps := make([]*regexp.Regexp, len(headers))
+	for i := 0; i < len(headers); i++ {
+		regexps[i], err = regexp.Compile(`(?i)\r\n` + headers[i] + suffix)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return regexps, nil
+}
+
+// keepHeaders builds a func that removes all non-matching headers.
+func keepHeaders(headers ...string) (HeaderRewriterFunc, error) {
+	regexps, err := compileHeaderRegexps(`:.+?\r\n`, headers...)
+	if err != nil {
+		return nil, err
+	}
+	return func(buf []byte) []byte {
+		lines := bytes.Split(buf, crlf)
+		for i := len(lines) - 3; i > 0; i-- {
+			var keep bool
+			for _, re := range regexps {
+				if re.Match(append(crlf, append(lines[i], crlf...)...)) {
+					keep = true
+					break
+				}
+			}
+			if !keep {
+				lines = append(lines[:i], lines[i+1:]...)
+			}
+		}
+		return bytes.Join(lines, crlf)
+	}, nil
+}
+
+// stripHeaders builds a func that removes matching headers.
+func stripHeaders(headers ...string) (HeaderRewriterFunc, error) {
+	regexps, err := compileHeaderRegexps(`:.+?\r\n`, headers...)
+	if err != nil {
+		return nil, err
+	}
+	return func(buf []byte) []byte {
+		for _, re := range regexps {
+			for re.Match(buf) {
+				buf = re.ReplaceAll(buf, crlf)
+			}
+		}
+		return buf
+	}, nil
+}
+
+var crlf = []byte{'\r', '\n'}
+
+// Predefined header strip funcs.
+var (
+	stripTransferEncodingHeader func([]byte) []byte
+	stripContentLengthHeader    func([]byte) []byte
+)
+
+func init() {
+	var err error
+	stripTransferEncodingHeader, err = stripHeaders("Transfer-Encoding")
+	if err != nil {
+		panic(err)
+	}
+	stripContentLengthHeader, err = stripHeaders("Content-Length")
+	if err != nil {
+		panic(err)
+	}
 }
