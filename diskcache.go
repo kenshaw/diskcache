@@ -14,63 +14,21 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
-	"errors"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
-	"strings"
+	"sort"
 	"time"
 
 	"github.com/spf13/afero"
-	"github.com/tdewolff/minify"
-	"github.com/tdewolff/minify/css"
-	"github.com/tdewolff/minify/html"
-	"github.com/tdewolff/minify/js"
-	"github.com/tdewolff/minify/json"
-	"github.com/tdewolff/minify/svg"
-	"github.com/tdewolff/minify/xml"
 	"github.com/yookoala/realpath"
 )
-
-// Matcher is the shared interface for rewriting URLs to disk paths.
-type Matcher interface {
-	// Match matches the passed request, returning the key and ttl.
-	Match(*http.Request) (string, time.Duration, error)
-}
-
-// Minifier is the shared interface for minifiers.
-type Minifier interface {
-	// Minify minifies from r to w, for the provided url and content type.
-	Minify(w io.Writer, r io.Reader, urlstr string, code int, contentType string) error
-}
-
-// CompressDecompressor is the shared interface for compression
-// implementations.
-type CompressDecompressor interface {
-	Compress(w io.Writer, r io.Reader) error
-	Decompress(w io.Writer, r io.Reader) error
-}
-
-// HeaderRewriter is the shared interface for modifying/altering headers prior
-// to storage on disk.
-type HeaderRewriter interface {
-	HeaderRewrite([]byte) []byte
-}
-
-// HeaderRewriteFunc is a header rewriter func.
-type HeaderRewriterFunc func([]byte) []byte
-
-// HeaderRewrite satisifies the HeaderRewriter interface.
-func (f HeaderRewriterFunc) HeaderRewrite(buf []byte) []byte {
-	return f(buf)
-}
 
 // Cache is a http.RoundTripper compatible disk cache.
 type Cache struct {
@@ -79,8 +37,8 @@ type Cache struct {
 	fileMode             os.FileMode
 	fs                   afero.Fs
 	matchers             []Matcher
-	headerRewriters      []HeaderRewriter
-	minifier             Minifier
+	headerMungers        []HeaderMunger
+	bodyMungers          []BodyMunger
 	compressDecompressor CompressDecompressor
 }
 
@@ -107,10 +65,15 @@ func New(opts ...Option) (*Cache, error) {
 		}
 	}
 
+	// sort mungers
+	sort.Slice(c.bodyMungers, func(a, b int) bool {
+		return c.bodyMungers[a].MungePriority() < c.bodyMungers[b].MungePriority()
+	})
+
 	return c, nil
 }
 
-// RoundTrip satisifies the http.RoundTripper interface.
+// RoundTrip satisfies the http.RoundTripper interface.
 func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 	key, ttl, err := c.Match(req)
 	if err != nil {
@@ -160,23 +123,14 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		buf = stripTransferEncodingHeader(buf)
-		for _, hr := range c.headerRewriters {
-			buf = hr.HeaderRewrite(buf)
+		for _, hr := range c.headerMungers {
+			buf = hr.HeaderMunge(buf)
 		}
 
-		// minify body
-		if c.minifier != nil {
-			m := new(bytes.Buffer)
-			if err = c.minifier.Minify(m, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type")); err != nil {
-				return nil, err
-			}
-			buf = append(stripContentLengthHeader(buf), m.Bytes()...)
-		} else {
-			body, err := ioutil.ReadAll(res.Body)
-			if err != nil {
-				return nil, err
-			}
-			buf = append(buf, body...)
+		// munge body
+		buf, err = c.mungeAndAppend(buf, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type"))
+		if err != nil {
+			return nil, err
 		}
 
 		// ensure path exists
@@ -225,6 +179,29 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	return http.ReadResponse(bufio.NewReader(r), req)
+}
+
+// mungeAndAppend walks the body munger chain, applying each successive body
+// munger.
+func (c *Cache) mungeAndAppend(buf []byte, r io.Reader, urlstr string, code int, contentType string) ([]byte, error) {
+	if c.bodyMungers != nil {
+		for _, m := range c.bodyMungers {
+			w := new(bytes.Buffer)
+			success, err := m.BodyMunge(w, r, urlstr, code, contentType)
+			if err != nil {
+				return nil, err
+			}
+			r = bytes.NewReader(w.Bytes())
+			if !success {
+				break
+			}
+		}
+	}
+	body, err := ioutil.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	return append(stripContentLengthHeader(buf), body...), nil
 }
 
 // Match finds the first matching cache policy for the request.
@@ -320,10 +297,10 @@ func WithMatchers(matchers ...Matcher) Option {
 	}
 }
 
-// WithHeaderRewriters is a disk cache option to set the header rewriters used.
-func WithHeaderRewriters(headerRewriters ...HeaderRewriter) Option {
+// WithHeaderMungers is a disk cache option to set the header rewriters used.
+func WithHeaderMungers(headerMungers ...HeaderMunger) Option {
 	return func(c *Cache) error {
-		c.headerRewriters = headerRewriters
+		c.headerMungers = headerMungers
 		return nil
 	}
 }
@@ -332,11 +309,11 @@ func WithHeaderRewriters(headerRewriters ...HeaderRewriter) Option {
 // strips all headers in the blacklist.
 func WithHeaderBlacklist(blacklist ...string) Option {
 	return func(c *Cache) error {
-		headerRewriter, err := stripHeaders(blacklist...)
+		headerMunger, err := stripHeaders(blacklist...)
 		if err != nil {
 			return err
 		}
-		c.headerRewriters = append(c.headerRewriters, headerRewriter)
+		c.headerMungers = append(c.headerMungers, headerMunger)
 		return nil
 	}
 }
@@ -345,47 +322,85 @@ func WithHeaderBlacklist(blacklist ...string) Option {
 // strips any headers not in the whitelist.
 func WithHeaderWhitelist(whitelist ...string) Option {
 	return func(c *Cache) error {
-		headerRewriter, err := keepHeaders(whitelist...)
+		headerMunger, err := keepHeaders(whitelist...)
 		if err != nil {
 			return err
 		}
-		c.headerRewriters = append(c.headerRewriters, headerRewriter)
+		c.headerMungers = append(c.headerMungers, headerMunger)
 		return nil
 	}
 }
 
-// WithHeaderMangler is a disk cache option to set pairs of matching and
+// WithHeaderMunger is a disk cache option to set pairs of matching and
 // replacement regexps that modify the header prior to storage on disk.
-func WithHeaderMangler(pairs ...string) Option {
+func WithHeaderMunger(pairs ...string) Option {
 	return func(c *Cache) error {
-		headerRewriter, err := NewHeaderMangler(pairs...)
+		headerMunger, err := NewHeaderMunger(pairs...)
 		if err != nil {
 			return err
 		}
-		c.headerRewriters = append(c.headerRewriters, headerRewriter)
+		c.headerMungers = append(c.headerMungers, headerMunger)
 		return nil
 	}
 }
 
-// Minifier is a disk cache option to set a minifier.
-//
-// See: github.com/tdewolff/minify/http for out-of-the box compatible http minifier.
-func WithMinifier(minifier Minifier) Option {
+// WithBodyMungers is a disk cache option to set the body mungers used.
+func WithBodyMungers(bodyMungers ...BodyMunger) Option {
 	return func(c *Cache) error {
-		c.minifier = minifier
+		c.bodyMungers = c.bodyMungers
 		return nil
 	}
 }
 
-// WithBasicMinifier is a disk cache option to use a basic HTML minifier.
+// WithMinifier is a disk cache option to add a body munger that does content
+// minification of HTML, XML, SVG, JavaScript, JSON, and CSS data to reduce
+// storage overhead.
 //
-// If truncate is true, will drop the returned bodies for any non HTTP 200 OK
-// responses.
-//
-// Builds a basic text/html minifier using github.com/tdewolff/minify.
-func WithBasicMinifier(truncate bool) Option {
+// See: github.com/tdewolff/minify
+func WithMinifier() Option {
 	return func(c *Cache) error {
-		c.minifier = BasicMinifier{Truncate: truncate}
+		c.bodyMungers = append(c.bodyMungers, Minifier{
+			Priority: MungePriorityMinify,
+		})
+		return nil
+	}
+}
+
+// WithErrorTruncator is a disk cache option to add a body munger that
+// truncates the response when the HTTP status code != OK (200).
+func WithErrorTruncator() Option {
+	return func(c *Cache) error {
+		c.bodyMungers = append(c.bodyMungers, ErrorTruncator{
+			Priority: MungePriorityFirst,
+		})
+		return nil
+	}
+}
+
+// WithBase64Decoder is a disk cache option to add a body munger that decodes
+func WithBase64Decoder(contentType string) Option {
+	return func(c *Cache) error {
+		c.bodyMungers = append(c.bodyMungers, Base64Decoder{
+			Priority:    MungePriorityDecode,
+			Encoding:    base64.StdEncoding,
+			ContentType: contentType,
+		})
+		return nil
+	}
+}
+
+// WithPrefixStripper is a disk cache option to strip a specific XSS prefix for a
+// specified content type.
+//
+// Useful for decoding JavaScript or JSON data that has add a XSS prevention
+// prefixed to it (ie, ).
+func WithPrefixStripper(prefix []byte, contentType string) Option {
+	return func(c *Cache) error {
+		c.bodyMungers = append(c.bodyMungers, PrefixStripper{
+			Priority:    MungePriorityModify,
+			Prefix:      prefix,
+			ContentType: contentType,
+		})
 		return nil
 	}
 }
@@ -403,7 +418,9 @@ func WithCompressDecompressor(compressDecompressor CompressDecompressor) Option 
 // compression.
 func WithGzipCompression() Option {
 	return func(c *Cache) error {
-		c.compressDecompressor = GzipCompressDecompressor{Level: gzip.DefaultCompression}
+		c.compressDecompressor = GzipCompressDecompressor{
+			Level: gzip.DefaultCompression,
+		}
 		return nil
 	}
 }
@@ -412,233 +429,9 @@ func WithGzipCompression() Option {
 // compression.
 func WithZlibCompression() Option {
 	return func(c *Cache) error {
-		c.compressDecompressor = ZlibCompressDecompressor{Level: zlib.DefaultCompression}
-		return nil
-	}
-}
-
-// BasicMinifier is a basic html minifier.
-type BasicMinifier struct {
-	Truncate bool
-}
-
-var (
-	jsContentTypeRE   = regexp.MustCompile("^(application|text)/(x-)?(java|ecma)script$")
-	jsonContentTypeRE = regexp.MustCompile("[/+]json$")
-	xmlContentTypeRE  = regexp.MustCompile("[/+]xml$")
-)
-
-// Minify satisfies the Minifier interface.
-func (m BasicMinifier) Minify(w io.Writer, r io.Reader, urlstr string, code int, contentType string) error {
-	if m.Truncate && code != http.StatusOK {
-		return nil
-	}
-
-	if i := strings.Index(contentType, ";"); i != -1 {
-		contentType = contentType[:i]
-	}
-
-	switch {
-	default:
-		_, err := io.Copy(w, r)
-		if err != nil {
-			return err
+		c.compressDecompressor = ZlibCompressDecompressor{
+			Level: zlib.DefaultCompression,
 		}
 		return nil
-
-	case contentType == "text/html",
-		contentType == "text/css",
-		contentType == "image/svg+xml",
-		jsContentTypeRE.MatchString(contentType),
-		jsonContentTypeRE.MatchString(contentType),
-		xmlContentTypeRE.MatchString(contentType):
-	}
-
-	z := minify.New()
-	z.AddFunc("text/html", html.Minify)
-	z.AddFunc("text/css", css.Minify)
-	z.AddFunc("image/svg+xml", svg.Minify)
-	z.AddFuncRegexp(jsContentTypeRE, js.Minify)
-	z.AddFuncRegexp(jsonContentTypeRE, json.Minify)
-	z.AddFuncRegexp(xmlContentTypeRE, xml.Minify)
-	if contentType == "text/html" {
-		var err error
-		z.URL, err = url.Parse(urlstr)
-		if err != nil {
-			return err
-		}
-	}
-	return z.Minify(contentType, w, r)
-}
-
-// GzipCompressDecompressor is a gzip compressor/decompressor.
-type GzipCompressDecompressor struct {
-	// Level is the compression level.
-	Level int
-}
-
-// Compress satisfies the CompressDecompressor interface.
-func (z GzipCompressDecompressor) Compress(w io.Writer, r io.Reader) error {
-	c, err := gzip.NewWriterLevel(w, z.Level)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(c, r)
-	if err != nil {
-		return err
-	}
-	if err = c.Flush(); err != nil {
-		return err
-	}
-	return c.Close()
-}
-
-// Decompress satisfies the CompressDecompressor interface.
-func (z GzipCompressDecompressor) Decompress(w io.Writer, r io.Reader) error {
-	d, err := gzip.NewReader(r)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(w, d)
-	return err
-}
-
-// ZlibCompressDecompressor is a zlib compressor/decompressor.
-type ZlibCompressDecompressor struct {
-	// Level is the compression level.
-	Level int
-
-	// Dict is the compression dictionary.
-	Dict []byte
-}
-
-// Compress satisfies the CompressDecompressor interface.
-func (z ZlibCompressDecompressor) Compress(w io.Writer, r io.Reader) error {
-	c, err := zlib.NewWriterLevelDict(w, z.Level, z.Dict)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(c, r)
-	return err
-}
-
-// Decompress satisfies the CompressDecompressor interface.
-func (z ZlibCompressDecompressor) Decompress(w io.Writer, r io.Reader) error {
-	d, err := zlib.NewReaderDict(r, z.Dict)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(w, d)
-	return err
-}
-
-// HeaderMangler mangles headers matching regexps and replacements.
-type HeaderMangler struct {
-	Regexps []*regexp.Regexp
-	Repls   [][]byte
-}
-
-// NewHeaderMangler creates a new header mangler from the passed matching
-// regexp and replacement pairs.
-func NewHeaderMangler(pairs ...string) (*HeaderMangler, error) {
-	n := len(pairs)
-	if n%2 != 0 {
-		return nil, errors.New("must have matching regexp and replacement pairs")
-	}
-	headers, repls := make([]string, n/2), make([][]byte, n/2)
-	for i := 0; i < n; i += 2 {
-		headers[i/2], repls[i/2] = pairs[i], append([]byte(pairs[i+1]), crlf...)
-	}
-	regexps, err := compileHeaderRegexps(`\r\n`, headers...)
-	if err != nil {
-		return nil, err
-	}
-	return &HeaderMangler{Regexps: regexps, Repls: repls}, nil
-}
-
-// HeaderRewrite satisfies the HeaderRewriter interface.
-func (m *HeaderMangler) HeaderRewrite(buf []byte) []byte {
-	lines := bytes.Split(buf, crlf)
-	for i := 1; i < len(lines)-2; i++ {
-		for j, re := range m.Regexps {
-			line := append(crlf, append(lines[i], crlf...)...)
-			if re.Match(line) {
-				lines[i] = bytes.TrimSuffix(re.ReplaceAll(line, m.Repls[j]), crlf)
-			}
-		}
-	}
-	return bytes.Join(lines, crlf)
-}
-
-// compileHeaderRegexps compiles header regexps.
-func compileHeaderRegexps(suffix string, headers ...string) ([]*regexp.Regexp, error) {
-	var err error
-	regexps := make([]*regexp.Regexp, len(headers))
-	for i := 0; i < len(headers); i++ {
-		regexps[i], err = regexp.Compile(`(?i)\r\n` + headers[i] + suffix)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return regexps, nil
-}
-
-// keepHeaders builds a func that removes all non-matching headers.
-func keepHeaders(headers ...string) (HeaderRewriterFunc, error) {
-	regexps, err := compileHeaderRegexps(`:.+?\r\n`, headers...)
-	if err != nil {
-		return nil, err
-	}
-	return func(buf []byte) []byte {
-		lines := bytes.Split(buf, crlf)
-		for i := len(lines) - 3; i > 0; i-- {
-			var keep bool
-			for _, re := range regexps {
-				if re.Match(append(crlf, append(lines[i], crlf...)...)) {
-					keep = true
-					break
-				}
-			}
-			if !keep {
-				lines = append(lines[:i], lines[i+1:]...)
-			}
-		}
-		return bytes.Join(lines, crlf)
-	}, nil
-}
-
-// stripHeaders builds a func that removes matching headers.
-func stripHeaders(headers ...string) (HeaderRewriterFunc, error) {
-	regexps, err := compileHeaderRegexps(`:.+?\r\n`, headers...)
-	if err != nil {
-		return nil, err
-	}
-	return func(buf []byte) []byte {
-		for _, re := range regexps {
-			for re.Match(buf) {
-				buf = re.ReplaceAll(buf, crlf)
-			}
-		}
-		return buf
-	}, nil
-}
-
-var crlf = []byte{'\r', '\n'}
-
-// Predefined header strip funcs.
-var (
-	stripTransferEncodingHeader func([]byte) []byte
-	stripContentLengthHeader    func([]byte) []byte
-)
-
-func init() {
-	var err error
-	stripTransferEncodingHeader, err = stripHeaders("Transfer-Encoding")
-	if err != nil {
-		panic(err)
-	}
-	stripContentLengthHeader, err = stripHeaders("Content-Length")
-	if err != nil {
-		panic(err)
 	}
 }

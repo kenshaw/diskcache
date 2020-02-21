@@ -40,13 +40,14 @@ func ExampleNew() {
 				`GET`,
 				`^(?P<proto>https?)://(?P<host>[^:]+)(:[0-9]+)?$`,
 				`^/?(?P<path>.*)$`,
-				`{{proto}}/{{host}}/{{path}}_{{query}}`,
+				`{{proto}}/{{host}}/{{path}}{{query}}`,
 				diskcache.WithTTL(365*24*time.Hour),
-				diskcache.WithQueryEscape(),
+				diskcache.WithQueryEscape("_"),
 			),
 		),
 		diskcache.WithHeaderBlacklist("Set-Cookie", "Date"),
-		diskcache.WithBasicMinifier(true),
+		diskcache.WithMinifier(),
+		diskcache.WithErrorTruncator(),
 		diskcache.WithGzipCompression(),
 	)
 	if err != nil {

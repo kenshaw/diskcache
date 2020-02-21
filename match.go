@@ -10,6 +10,12 @@ import (
 	"github.com/gobwas/glob"
 )
 
+// Matcher is the shared interface for rewriting URLs to disk paths.
+type Matcher interface {
+	// Match matches the passed request, returning the key and ttl.
+	Match(*http.Request) (string, time.Duration, error)
+}
+
 // SimpleMatch is a simple path matcher.
 type SimpleMatch struct {
 	method      glob.Glob
@@ -20,6 +26,7 @@ type SimpleMatch struct {
 	key         string
 	ttl         time.Duration
 	queryEscape bool
+	queryPrefix string
 }
 
 // Match creates a new simple match for the provided method, host, path, and
@@ -71,7 +78,11 @@ func (m *SimpleMatch) Match(req *http.Request) (string, time.Duration, error) {
 		pairs = append(pairs, "{{"+m.pathSubexps[i]+"}}", p[i])
 	}
 	if m.queryEscape {
-		pairs = append(pairs, "{{query}}", url.QueryEscape(req.URL.Query().Encode()))
+		q := url.QueryEscape(req.URL.Query().Encode())
+		if q != "" {
+			q = m.queryPrefix + q
+		}
+		pairs = append(pairs, "{{query}}", q)
 	}
 	key := strings.NewReplacer(pairs...).Replace(m.key)
 	return strings.TrimSuffix(fixRE.ReplaceAllString(key, "/"), "/"), m.ttl, nil
@@ -88,8 +99,8 @@ func WithTTL(ttl time.Duration) MatchOption {
 }
 
 // WithQueryEscape is a simple match option to toggle escaping the query on rewritten URLs.
-func WithQueryEscape() MatchOption {
+func WithQueryEscape(queryPrefix string) MatchOption {
 	return func(m *SimpleMatch) {
-		m.queryEscape = true
+		m.queryEscape, m.queryPrefix = true, queryPrefix
 	}
 }

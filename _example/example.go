@@ -37,10 +37,11 @@ func main() {
 				"X-[^:]*",
 			),
 		*/
-		diskcache.WithHeaderMangler(
+		diskcache.WithHeaderMunger(
 			`Date:(\s+).+?`, `Date:${1}TODAY`,
 		),
-		diskcache.WithBasicMinifier(true),
+		diskcache.WithMinifier(),
+		diskcache.WithErrorTruncator(),
 		diskcache.WithGzipCompression(),
 	)
 	if err != nil {
