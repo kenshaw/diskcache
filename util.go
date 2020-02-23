@@ -31,20 +31,17 @@ func keepHeaders(headers ...string) (HeaderTransformerFunc, error) {
 		return nil, err
 	}
 	return func(buf []byte) []byte {
-		lines := bytes.Split(buf, crlf)
-		for i := len(lines) - 3; i > 0; i-- {
-			var keep bool
+		lines := bytes.Split(bytes.TrimSpace(buf), crlf)
+		keep := [][]byte{lines[0]}
+		for i := 1; i < len(lines); i++ {
 			for _, re := range regexps {
 				if re.Match(append(crlf, append(lines[i], crlf...)...)) {
-					keep = true
+					keep = append(keep, lines[i])
 					break
 				}
 			}
-			if !keep {
-				lines = append(lines[:i], lines[i+1:]...)
-			}
 		}
-		return bytes.Join(lines, crlf)
+		return bytes.Join(append(keep, nil, nil), crlf)
 	}, nil
 }
 
