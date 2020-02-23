@@ -35,6 +35,10 @@ func ExampleNew() {
 	// create disk cache
 	d, err := diskcache.New(
 		// diskcache.WithBasePathFs("/path/to/cacheDir"),
+		diskcache.WithHeaderBlacklist("Set-Cookie", "Date"),
+		diskcache.WithMinifier(),
+		diskcache.WithErrorTruncator(),
+		diskcache.WithGzipCompression(),
 		diskcache.Match(
 			`GET`,
 			`^(?P<proto>https?)://(?P<host>[^:]+)(:[0-9]+)?$`,
@@ -43,10 +47,6 @@ func ExampleNew() {
 			diskcache.WithTTL(365*24*time.Hour),
 			diskcache.WithQueryPrefix("_"),
 		),
-		diskcache.WithHeaderBlacklist("Set-Cookie", "Date"),
-		diskcache.WithMinifier(),
-		diskcache.WithErrorTruncator(),
-		diskcache.WithGzipCompression(),
 	)
 	if err != nil {
 		panic(err)

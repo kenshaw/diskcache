@@ -66,7 +66,7 @@ type Cache struct {
 // New creates a new disk cache.
 //
 // By default, the cache path will be <working directory>/cache. Change
-// location using Options.
+// location using options.
 func New(opts ...Option) (*Cache, error) {
 	c := &Cache{
 		dirMode:  0755,
@@ -117,7 +117,7 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
-	// no disk caching policy available
+	// no caching policy, pass to regular transport
 	if key == "" {
 		transport := c.transport
 		if transport == nil {
@@ -154,7 +154,7 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // do executes the request, applying header and body transformers, before
-// marshaling and storing the HTTP response.
+// marshaling and storing the response.
 func (c *Cache) do(key string, m Policy, req *http.Request) (*bufio.Reader, error) {
 	transport := c.transport
 	if transport == nil {
@@ -185,17 +185,6 @@ func (c *Cache) do(key string, m Policy, req *http.Request) (*bufio.Reader, erro
 	}
 	body := buf
 
-	// ensure path exists
-	if err = c.fs.MkdirAll(path.Dir(key), c.dirMode); err != nil {
-		return nil, err
-	}
-
-	// open cache file
-	f, err := c.fs.OpenFile(key, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, c.fileMode)
-	if err != nil {
-		return nil, err
-	}
-
 	// marshal
 	if m.MarshalUnmarshaler != nil {
 		b := new(bytes.Buffer)
@@ -207,6 +196,15 @@ func (c *Cache) do(key string, m Policy, req *http.Request) (*bufio.Reader, erro
 
 	// store
 	if len(buf) != 0 {
+		// ensure path exists
+		if err = c.fs.MkdirAll(path.Dir(key), c.dirMode); err != nil {
+			return nil, err
+		}
+		// open cache file
+		f, err := c.fs.OpenFile(key, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, c.fileMode)
+		if err != nil {
+			return nil, err
+		}
 		if _, err = f.Write(buf); err != nil {
 			return nil, err
 		}
@@ -267,14 +265,13 @@ func (c *Cache) EvictKey(key string) error {
 	return c.fs.Remove(key)
 }
 
-// Option is a disk cache and simple matcher option.
+// Option is a disk cache option.
 type Option interface {
 	cache(*Cache) error
 	simpleMatcher(*SimpleMatcher)
 }
 
-// option provides a simple wrapper around disk cache and simple matcher
-// options.
+// option wraps setting disk cache and simple matcher options.
 type option struct {
 	c func(*Cache) error
 	m func(*SimpleMatcher)
@@ -358,7 +355,7 @@ func WithBasePathFs(basePath string) Option {
 	}
 }
 
-// WithMatchers is a disk cache option to set the matchers used.
+// WithMatchers is a disk cache option to set matchers.
 func WithMatchers(matchers ...Matcher) Option {
 	return option{
 		c: func(c *Cache) error {
@@ -368,17 +365,9 @@ func WithMatchers(matchers ...Matcher) Option {
 	}
 }
 
-// WithDefaultMatcher is a disk cache option to set the default matcher.
-func WithDefaultMatcher(matcher *SimpleMatcher) Option {
-	return option{
-		c: func(c *Cache) error {
-			c.matcher = matcher
-			return nil
-		},
-	}
-}
-
-// WithNoDefault is a disk cache option to disable the default matcher.
+// WithNoDefault is a disk cache option to disable default matcher.
+//
+// Prevents propagating settings from default matcher.
 func WithNoDefault() Option {
 	return option{
 		c: func(c *Cache) error {
@@ -388,7 +377,8 @@ func WithNoDefault() Option {
 	}
 }
 
-// WithHeaderTransformers is a disk cache option to set the header rewriters used.
+// WithHeaderTransformers is a disk cache option to set the header
+// transformers.
 func WithHeaderTransformers(headerTransformers ...HeaderTransformer) Option {
 	return option{
 		c: func(c *Cache) error {
@@ -401,8 +391,8 @@ func WithHeaderTransformers(headerTransformers ...HeaderTransformer) Option {
 	}
 }
 
-// WithHeaderBlacklist is a disk cache option to set a header rewriter that
-// strips all headers in the blacklist.
+// WithHeaderBlacklist is a disk cache option to add a header transformer that
+// removes any header in the blacklist.
 func WithHeaderBlacklist(blacklist ...string) Option {
 	headerTransformer, err := stripHeaders(blacklist...)
 	if err != nil {
@@ -419,8 +409,8 @@ func WithHeaderBlacklist(blacklist ...string) Option {
 	}
 }
 
-// WithHeaderWhitelist is a disk cache option to set a header rewriter that
-// strips any headers not in the whitelist.
+// WithHeaderWhitelist is a disk cache option to add a header transformer that
+// removes any header not in the whitelist.
 func WithHeaderWhitelist(whitelist ...string) Option {
 	headerTransformer, err := keepHeaders(whitelist...)
 	if err != nil {
@@ -437,8 +427,8 @@ func WithHeaderWhitelist(whitelist ...string) Option {
 	}
 }
 
-// WithHeaderTransform is a disk cache option to set pairs of matching and
-// replacement regexps that modify the header prior to storage on disk.
+// WithHeaderTransform is a disk cache option to add a header transformer that
+// transforms headers matching the provided regexp pairs and replacements.
 func WithHeaderTransform(pairs ...string) Option {
 	headerTransformer, err := NewHeaderTransformer(pairs...)
 	if err != nil {
@@ -455,7 +445,7 @@ func WithHeaderTransform(pairs ...string) Option {
 	}
 }
 
-// WithBodyTransformers is a disk cache option to set the body transformers used.
+// WithBodyTransformers is a disk cache option to set the body transformers.
 func WithBodyTransformers(bodyTransformers ...BodyTransformer) Option {
 	return option{
 		c: func(c *Cache) error {
@@ -468,9 +458,9 @@ func WithBodyTransformers(bodyTransformers ...BodyTransformer) Option {
 	}
 }
 
-// WithMinifier is a disk cache option to add a body transformer that does content
-// minification of HTML, XML, SVG, JavaScript, JSON, and CSS data to reduce
-// storage overhead.
+// WithMinifier is a disk cache option to add a body transformer that does
+// content minification of HTML, XML, SVG, JavaScript, JSON, and CSS data.
+// Useful for reducing disk storage sizes.
 //
 // See: github.com/tdewolff/minify
 func WithMinifier() Option {
@@ -489,7 +479,7 @@ func WithMinifier() Option {
 }
 
 // WithErrorTruncator is a disk cache option to add a body transformer that
-// truncates the response when the HTTP status code != OK (200).
+// truncates responses when the HTTP status code != OK (200).
 func WithErrorTruncator() Option {
 	z := ErrorTruncator{
 		Priority: TransformPriorityFirst,
@@ -505,7 +495,8 @@ func WithErrorTruncator() Option {
 	}
 }
 
-// WithBase64Decoder is a disk cache option to add a body transformer that decodes
+// WithBase64Decoder is a disk cache option to add a body transformer that does
+// base64 decoding of responses for specific content types.
 func WithBase64Decoder(contentType string) Option {
 	z := Base64Decoder{
 		Priority:    TransformPriorityDecode,
@@ -523,11 +514,10 @@ func WithBase64Decoder(contentType string) Option {
 	}
 }
 
-// WithPrefixStripper is a disk cache option to strip a specific XSS prefix for a
-// specified content type.
+// WithPrefixStripper is a disk cache option to add a body transformer that
+// strips a specific XSS prefix for a specified content type.
 //
-// Useful for decoding JavaScript or JSON data that has add a XSS prevention
-// prefixed to it (ie, ).
+// Useful for removing XSS prefixes added to JavaScript or JSON content.
 func WithPrefixStripper(prefix []byte, contentType string) Option {
 	z := PrefixStripper{
 		Priority:    TransformPriorityModify,
@@ -545,8 +535,7 @@ func WithPrefixStripper(prefix []byte, contentType string) Option {
 	}
 }
 
-// WithMarshalUnmarshaler is a disk cache option to set a compression
-// handler.
+// WithMarshalUnmarshaler is a disk cache option to set a marshaler/unmarshaler.
 func WithMarshalUnmarshaler(marshalUnmarshaler MarshalUnmarshaler) Option {
 	return option{
 		c: func(c *Cache) error {
@@ -559,8 +548,7 @@ func WithMarshalUnmarshaler(marshalUnmarshaler MarshalUnmarshaler) Option {
 	}
 }
 
-// WithGzipCompression is a disk cache option that marshals/unmarshals using gzip
-// compression.
+// WithGzipCompression is a disk cache option to set a gzip marshaler/unmarshaler.
 func WithGzipCompression() Option {
 	z := GzipMarshalUnmarshaler{
 		Level: gzip.DefaultCompression,
@@ -576,8 +564,7 @@ func WithGzipCompression() Option {
 	}
 }
 
-// WithZlibCompression is a disk cache option that marshals/unmarshals using zlib
-// compression.
+// WithZlibCompression is a disk cache option to set a zlib marshaler/unmarshaler.
 func WithZlibCompression() Option {
 	z := ZlibMarshalUnmarshaler{
 		Level: zlib.DefaultCompression,
@@ -593,10 +580,10 @@ func WithZlibCompression() Option {
 	}
 }
 
-// WithFlatStorage is a disk cache option that marshals/unmarshals responses,
-// without the response header.
+// WithFlatStorage is a disk cache option to set a flat marshaler/unmarshaler
+// removing headers from responses.
 //
-// Note: cached responses will not have the original headers restored.
+// Note: cached responses will not have original headers.
 func WithFlatStorage() Option {
 	z := FlatMarshalUnmarshaler{}
 	return option{
@@ -611,10 +598,10 @@ func WithFlatStorage() Option {
 }
 
 // WithFlatChain is a disk cache option that marshals/unmarshals responses,
-// without the response header, and chaining marshaling/unmarshaling to the
+// removing headers from responses, and chaining marshaling/unmarshaling to a
 // provided marshaler/unmarshaler.
 //
-// Note: cached responses will not have the original headers restored.
+// Note: cached responses will not have original headers.
 func WithFlatChain(marshalUnmarshaler MarshalUnmarshaler) Option {
 	z := FlatMarshalUnmarshaler{Chain: marshalUnmarshaler}
 	return option{
@@ -629,9 +616,9 @@ func WithFlatChain(marshalUnmarshaler MarshalUnmarshaler) Option {
 }
 
 // WithFlatGzipCompression is a disk cache option that marshals/unmarshals
-// responses without the response header, and with gzip compression.
+// responses, with headers removed from responses, and with gzip compression.
 //
-// Note: cached responses will not have the original headers restored.
+// Note: cached responses will not have original headers.
 func WithFlatGzipCompression() Option {
 	return WithFlatChain(GzipMarshalUnmarshaler{
 		Level: gzip.DefaultCompression,
@@ -639,16 +626,16 @@ func WithFlatGzipCompression() Option {
 }
 
 // WithFlatZlibCompression is a disk cache option that marshals/unmarshals
-// responses without the response header, and with zlib compression.
+// responses, with headers removed from responses, and with zlib compression.
 //
-// Note: cached responses will not have the original headers restored.
+// Note: cached responses will not have original headers.
 func WithFlatZlibCompression() Option {
 	return WithFlatChain(ZlibMarshalUnmarshaler{
 		Level: zlib.DefaultCompression,
 	})
 }
 
-// WithTTL is a disk cache option to set the TTL policy for matches.
+// WithTTL is a disk cache option to set the cache policy TTL.
 func WithTTL(ttl time.Duration) Option {
 	return option{
 		c: func(c *Cache) error {
@@ -669,16 +656,15 @@ func WithQueryEncoder(queryEncoder func(url.Values) string) Option {
 			return nil
 		},
 		m: func(m *SimpleMatcher) {
+			m.queryEncoder = queryEncoder
 		},
 	}
 }
 
-// WithQueryPrefix is a disk cache option that sets a query encoder that does
-// canonical encoding, of query string values, additionally adding the prefix
-// when the encoded query string is non-empty.
+// WithQueryPrefix is a disk cache option that sets a query encoder, that adds
+// the supplied prefix to non-empty and canonical encoding
 //
-// Optionally, the encoded query string can be filtered to only the specified
-// query string fields.
+// The query string encoder can be limited to only the passed fields.
 func WithQueryPrefix(prefix string, fields ...string) Option {
 	f := func(v url.Values) string {
 		for k := range v {
