@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/gobwas/glob"
 )
@@ -13,28 +12,28 @@ import (
 // Matcher is the shared interface for rewriting URLs to disk paths.
 type Matcher interface {
 	// Match matches the passed request, returning the key and ttl.
-	Match(*http.Request) (string, time.Duration, error)
+	Match(*http.Request) (string, Policy, error)
 }
 
-// SimpleMatch is a simple path matcher.
-type SimpleMatch struct {
-	method      glob.Glob
-	host        *regexp.Regexp
-	hostSubexps []string
-	path        *regexp.Regexp
-	pathSubexps []string
-	key         string
-	ttl         time.Duration
-	queryEscape bool
-	queryPrefix string
+// SimpleMatcher is a simple path matcher.
+type SimpleMatcher struct {
+	method       glob.Glob
+	host         *regexp.Regexp
+	hostSubexps  []string
+	path         *regexp.Regexp
+	pathSubexps  []string
+	key          string
+	queryEncoder func(url.Values) string
+
+	policy Policy
 }
 
 // Match creates a new simple match for the provided method, host, path, and
 // substitution key string.
-func Match(method, host, path, key string, opts ...MatchOption) *SimpleMatch {
+func Match(method, host, path, key string, opts ...Option) *SimpleMatcher {
 	hostRE := regexp.MustCompile(host)
 	pathRE := regexp.MustCompile(path)
-	m := &SimpleMatch{
+	m := &SimpleMatcher{
 		method:      glob.MustCompile(method, ','),
 		host:        hostRE,
 		hostSubexps: hostRE.SubexpNames(),
@@ -43,7 +42,7 @@ func Match(method, host, path, key string, opts ...MatchOption) *SimpleMatch {
 		key:         key,
 	}
 	for _, o := range opts {
-		o(m)
+		o.simpleMatcher(m)
 	}
 	return m
 }
@@ -51,19 +50,18 @@ func Match(method, host, path, key string, opts ...MatchOption) *SimpleMatch {
 var fixRE = regexp.MustCompile(`/+`)
 
 // Match satisifies the Matcher interface.
-func (m *SimpleMatch) Match(req *http.Request) (string, time.Duration, error) {
+func (m *SimpleMatcher) Match(req *http.Request) (string, Policy, error) {
 	if !m.method.Match(req.Method) {
-		return "", 0, nil
+		return "", Policy{}, nil
 	}
 	h := m.host.FindStringSubmatch(req.URL.Scheme + "://" + req.URL.Host)
 	if h == nil {
-		return "", 0, nil
+		return "", Policy{}, nil
 	}
 	p := m.path.FindStringSubmatch(req.URL.Path)
 	if p == nil {
-		return "", 0, nil
+		return "", Policy{}, nil
 	}
-
 	pairs := []string{"{{method}}", strings.ToLower(req.Method)}
 	for i := 1; i < len(m.hostSubexps); i++ {
 		if m.hostSubexps[i] == "" {
@@ -77,30 +75,20 @@ func (m *SimpleMatch) Match(req *http.Request) (string, time.Duration, error) {
 		}
 		pairs = append(pairs, "{{"+m.pathSubexps[i]+"}}", p[i])
 	}
-	if m.queryEscape {
-		q := url.QueryEscape(req.URL.Query().Encode())
-		if q != "" {
-			q = m.queryPrefix + q
-		}
-		pairs = append(pairs, "{{query}}", q)
+	if m.queryEncoder != nil {
+		pairs = append(pairs, "{{query}}", m.queryEncoder(req.URL.Query()))
 	}
 	key := strings.NewReplacer(pairs...).Replace(m.key)
-	return strings.TrimSuffix(fixRE.ReplaceAllString(key, "/"), "/"), m.ttl, nil
+	return strings.TrimSuffix(fixRE.ReplaceAllString(key, "/"), "/"), m.policy, nil
 }
 
-// MatchOption is a simple match option.
-type MatchOption func(*SimpleMatch)
-
-// WithTTL is a simple match option to set the TTL policy for matches.
-func WithTTL(ttl time.Duration) MatchOption {
-	return func(m *SimpleMatch) {
-		m.ttl = ttl
-	}
+// cache satisfies the Option interface.
+func (m *SimpleMatcher) cache(c *Cache) error {
+	c.matcher = m
+	return nil
 }
 
-// WithQueryEscape is a simple match option to toggle escaping the query on rewritten URLs.
-func WithQueryEscape(queryPrefix string) MatchOption {
-	return func(m *SimpleMatch) {
-		m.queryEscape, m.queryPrefix = true, queryPrefix
-	}
+// simpleMatcher satisfies the Option interface.
+func (m *SimpleMatcher) simpleMatcher(*SimpleMatcher) {
+	panic("not supported")
 }

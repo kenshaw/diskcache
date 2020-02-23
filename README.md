@@ -32,28 +32,9 @@ import (
 func main() {
 	d, err := diskcache.New(
 		// diskcache.WithFs(afero.New*(...)),
-		diskcache.WithMatchers(
-			diskcache.Match(
-				`GET`,
-				`^(?P<proto>https?)://github\.com$`,
-				`^/?(?P<path>.*)$`,
-				`{{proto}}/github/{{path}}`,
-				diskcache.WithTTL(365*24*time.Hour),
-			),
-		),
+		diskcache.WithTTL(365*24*time.Hour),
 		diskcache.WithHeaderWhitelist("Date", "Set-Cookie", "Content-Type"),
-		/*
-			diskcache.WithHeaderBlacklist(
-				"Set-Cookie",
-				"Content-Security-Policy",
-				"Strict-Transport-Security",
-				"Cache-[^:]*",
-				"Vary",
-				"Expect-[^:]*",
-				"X-[^:]*",
-			),
-		*/
-		diskcache.WithHeaderMunger(
+		diskcache.WithHeaderTransform(
 			`Date:(\s+).+?`, `Date:${1}TODAY`,
 		),
 		diskcache.WithMinifier(),
@@ -64,7 +45,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// build client
+	// create client using diskcache as the transport
 	cl := &http.Client{
 		Transport: d,
 	}

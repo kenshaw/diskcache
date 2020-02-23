@@ -2,6 +2,8 @@ package diskcache
 
 import (
 	"bytes"
+	"io"
+	"io/ioutil"
 	"regexp"
 )
 
@@ -22,7 +24,7 @@ func compileHeaderRegexps(suffix string, headers ...string) ([]*regexp.Regexp, e
 var crlf = []byte{'\r', '\n'}
 
 // keepHeaders builds a func that removes all non-matching headers.
-func keepHeaders(headers ...string) (HeaderMungerFunc, error) {
+func keepHeaders(headers ...string) (HeaderTransformerFunc, error) {
 	regexps, err := compileHeaderRegexps(`:.+?\r\n`, headers...)
 	if err != nil {
 		return nil, err
@@ -46,7 +48,7 @@ func keepHeaders(headers ...string) (HeaderMungerFunc, error) {
 }
 
 // stripHeaders builds a func that removes matching headers.
-func stripHeaders(headers ...string) (HeaderMungerFunc, error) {
+func stripHeaders(headers ...string) (HeaderTransformerFunc, error) {
 	regexps, err := compileHeaderRegexps(`:.+?\r\n`, headers...)
 	if err != nil {
 		return nil, err
@@ -75,4 +77,25 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// transformAndAppend walks the body transformer chain, applying each successive body
+// transformer.
+func transformAndAppend(buf []byte, r io.Reader, urlstr string, code int, contentType string, bodyTransformers ...BodyTransformer) ([]byte, error) {
+	for _, m := range bodyTransformers {
+		w := new(bytes.Buffer)
+		success, err := m.BodyTransforme(w, r, urlstr, code, contentType)
+		if err != nil {
+			return nil, err
+		}
+		r = bytes.NewReader(w.Bytes())
+		if !success {
+			break
+		}
+	}
+	body, err := ioutil.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	return append(stripContentLengthHeader(buf), body...), nil
 }

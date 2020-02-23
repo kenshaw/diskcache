@@ -1,12 +1,13 @@
 // Package diskcache provides a http.RoundTripper implementation that can
-// minify, compress, and cache URLs retrieved using a standard http.Client on
-// disk based on custom matching, retention, and path rewriting rules.
+// minify, compress, and cache HTTP responses retrieved using a standard
+// http.Client on disk. Provides ability to define custom retention and storage
+// policies depending on the host, path, or other URL components.
 //
 // Package diskcache does not aim to work as a on-disk HTTP proxy -- see
-// github.com/gregjones/httpcache for a different http.RoundTripper
-// implementation that can act as a standard HTTP proxy.
+// github.com/gregjones/httpcache for a HTTP transport (http.RoundTripper)
+// implementation that provides a RFC 7234 compliant cache.
 //
-// Please see _example/example.go for a complete example.
+// See _example/example.go for a more complete example.
 package diskcache
 
 import (
@@ -15,11 +16,12 @@ import (
 	"compress/gzip"
 	"compress/zlib"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,16 +32,35 @@ import (
 	"github.com/yookoala/realpath"
 )
 
+// Policy is a disk cache policy.
+type Policy struct {
+	// TTL is the time-to-live.
+	TTL time.Duration
+
+	// HeaderTransformers are the set of header transformers.
+	HeaderTransformers []HeaderTransformer
+
+	// BodyTransformers are the set of body tranformers.
+	BodyTransformers []BodyTransformer
+
+	// MarshalUnmarshaler is the marshal/unmarshaler responsible for storage on
+	// disk.
+	MarshalUnmarshaler MarshalUnmarshaler
+}
+
 // Cache is a http.RoundTripper compatible disk cache.
 type Cache struct {
-	transport            http.RoundTripper
-	dirMode              os.FileMode
-	fileMode             os.FileMode
-	fs                   afero.Fs
-	matchers             []Matcher
-	headerMungers        []HeaderMunger
-	bodyMungers          []BodyMunger
-	compressDecompressor CompressDecompressor
+	transport http.RoundTripper
+	dirMode   os.FileMode
+	fileMode  os.FileMode
+	fs        afero.Fs
+	noDefault bool
+
+	// matchers are the set of url matchers.
+	matchers []Matcher
+
+	// matcher is default matcher.
+	matcher *SimpleMatcher
 }
 
 // New creates a new disk cache.
@@ -47,9 +68,19 @@ type Cache struct {
 // By default, the cache path will be <working directory>/cache. Change
 // location using Options.
 func New(opts ...Option) (*Cache, error) {
-	c := &Cache{dirMode: 0755, fileMode: 0644}
+	c := &Cache{
+		dirMode:  0755,
+		fileMode: 0644,
+		matcher: Match(
+			`GET`,
+			`^(?P<proto>https?)://(?P<host>[^:]+)(:[0-9]+)?$`,
+			`^/?(?P<path>.*)$`,
+			`{{proto}}/{{host}}/{{path}}{{query}}`,
+			WithQueryPrefix("_"),
+		),
+	}
 	for _, o := range opts {
-		if err := o(c); err != nil {
+		if err := o.cache(c); err != nil {
 			return nil, err
 		}
 	}
@@ -60,22 +91,28 @@ func New(opts ...Option) (*Cache, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err = WithBasePathFs(filepath.Join(dir, "cache"))(c); err != nil {
+		if err = WithBasePathFs(filepath.Join(dir, "cache")).cache(c); err != nil {
 			return nil, err
 		}
 	}
 
-	// sort mungers
-	sort.Slice(c.bodyMungers, func(a, b int) bool {
-		return c.bodyMungers[a].MungePriority() < c.bodyMungers[b].MungePriority()
-	})
+	// ensure body transformers are in order.
+	for _, v := range append(c.matchers, c.matcher) {
+		m, ok := v.(*SimpleMatcher)
+		if !ok {
+			continue
+		}
+		sort.Slice(m.policy.BodyTransformers, func(a, b int) bool {
+			return m.policy.BodyTransformers[a].TransformPriority() < m.policy.BodyTransformers[b].TransformPriority()
+		})
+	}
 
 	return c, nil
 }
 
 // RoundTrip satisfies the http.RoundTripper interface.
 func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
-	key, ttl, err := c.Match(req)
+	key, m, err := c.Match(req)
 	if err != nil {
 		return nil, err
 	}
@@ -99,123 +136,120 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 	case fi.IsDir():
 		return nil, fmt.Errorf("fs path %q is a directory", key)
 	default:
-		if ttl != 0 && time.Now().After(fi.ModTime().Add(ttl)) {
+		if m.TTL != 0 && time.Now().After(fi.ModTime().Add(m.TTL)) {
 			stale = true
 		}
 	}
 
+	var r *bufio.Reader
 	if stale {
-		transport := c.transport
-		if transport == nil {
-			transport = http.DefaultTransport
-		}
+		r, err = c.do(key, m, req)
+	} else {
+		r, err = c.load(key, m)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return http.ReadResponse(r, req)
+}
 
-		// grab
-		res, err := transport.RoundTrip(req)
-		if err != nil {
-			return nil, err
-		}
-		defer res.Body.Close()
-
-		// dump and process headers
-		buf, err := httputil.DumpResponse(res, false)
-		if err != nil {
-			return nil, err
-		}
-		buf = stripTransferEncodingHeader(buf)
-		for _, hr := range c.headerMungers {
-			buf = hr.HeaderMunge(buf)
-		}
-
-		// munge body
-		buf, err = c.mungeAndAppend(buf, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type"))
-		if err != nil {
-			return nil, err
-		}
-
-		// ensure path exists
-		if err = c.fs.MkdirAll(path.Dir(key), c.dirMode); err != nil {
-			return nil, err
-		}
-
-		// open cache file
-		f, err := c.fs.OpenFile(key, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, c.fileMode)
-		if err != nil {
-			return nil, err
-		}
-
-		// compress
-		if c.compressDecompressor != nil {
-			b := new(bytes.Buffer)
-			if err = c.compressDecompressor.Compress(b, bytes.NewReader(buf)); err != nil {
-				return nil, err
-			}
-			buf = b.Bytes()
-		}
-
-		// store
-		if _, err = f.Write(buf); err != nil {
-			return nil, err
-		}
-		if err = f.Close(); err != nil {
-			return nil, err
-		}
+// do executes the request, applying header and body transformers, before
+// marshaling and storing the HTTP response.
+func (c *Cache) do(key string, m Policy, req *http.Request) (*bufio.Reader, error) {
+	transport := c.transport
+	if transport == nil {
+		transport = http.DefaultTransport
 	}
 
-	// load
+	// grab
+	res, err := transport.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	// dump and apply header tranforms
+	buf, err := httputil.DumpResponse(res, false)
+	if err != nil {
+		return nil, err
+	}
+	buf = stripTransferEncodingHeader(buf)
+	for _, hr := range m.HeaderTransformers {
+		buf = hr.HeaderTransform(buf)
+	}
+
+	// apply body transforms
+	buf, err = transformAndAppend(buf, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type"), m.BodyTransformers...)
+	if err != nil {
+		return nil, err
+	}
+	body := buf
+
+	// ensure path exists
+	if err = c.fs.MkdirAll(path.Dir(key), c.dirMode); err != nil {
+		return nil, err
+	}
+
+	// open cache file
+	f, err := c.fs.OpenFile(key, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, c.fileMode)
+	if err != nil {
+		return nil, err
+	}
+
+	// marshal
+	if m.MarshalUnmarshaler != nil {
+		b := new(bytes.Buffer)
+		if err = m.MarshalUnmarshaler.Marshal(b, bytes.NewReader(buf)); err != nil {
+			return nil, err
+		}
+		buf = b.Bytes()
+	}
+
+	// store
+	if _, err = f.Write(buf); err != nil {
+		return nil, err
+	}
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
+
+	return bufio.NewReader(bytes.NewReader(body)), nil
+}
+
+// load reads the stored data on disk and unmarshals the response.
+func (c *Cache) load(key string, m Policy) (*bufio.Reader, error) {
+	var err error
 	var r io.Reader
 	r, err = c.fs.OpenFile(key, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
-
-	// decompress
-	if c.compressDecompressor != nil {
+	if m.MarshalUnmarshaler != nil {
 		b := new(bytes.Buffer)
-		if err = c.compressDecompressor.Decompress(b, r); err != nil {
+		if err = m.MarshalUnmarshaler.Unmarshal(b, r); err != nil {
 			return nil, err
 		}
 		r = b
 	}
-
-	return http.ReadResponse(bufio.NewReader(r), req)
-}
-
-// mungeAndAppend walks the body munger chain, applying each successive body
-// munger.
-func (c *Cache) mungeAndAppend(buf []byte, r io.Reader, urlstr string, code int, contentType string) ([]byte, error) {
-	if c.bodyMungers != nil {
-		for _, m := range c.bodyMungers {
-			w := new(bytes.Buffer)
-			success, err := m.BodyMunge(w, r, urlstr, code, contentType)
-			if err != nil {
-				return nil, err
-			}
-			r = bytes.NewReader(w.Bytes())
-			if !success {
-				break
-			}
-		}
-	}
-	body, err := ioutil.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	return append(stripContentLengthHeader(buf), body...), nil
+	return bufio.NewReader(r), nil
 }
 
 // Match finds the first matching cache policy for the request.
-func (c *Cache) Match(req *http.Request) (string, time.Duration, error) {
-	for _, m := range c.matchers {
-		key, ttl, err := m.Match(req)
+func (c *Cache) Match(req *http.Request) (string, Policy, error) {
+	matchers := c.matchers
+	if !c.noDefault {
+		matchers = append(matchers, c.matcher)
+	}
+	for _, m := range matchers {
+		key, p, err := m.Match(req)
 		if err != nil {
-			return "", 0, err
+			return "", Policy{}, err
 		}
 		if key != "" {
-			return key, ttl, nil
+			return key, p, nil
 		}
 	}
-	return "", 0, nil
+	return "", Policy{}, nil
 }
 
 // Evict forces a cache eviction (deletion) for the key matching the request.
@@ -232,23 +266,53 @@ func (c *Cache) EvictKey(key string) error {
 	return c.fs.Remove(key)
 }
 
-// Option is a disk cache option.
-type Option func(*Cache) error
+// Option is a disk cache and simple matcher option.
+type Option interface {
+	cache(*Cache) error
+	simpleMatcher(*SimpleMatcher)
+}
+
+// option provides a simple wrapper around disk cache and simple matcher
+// options.
+type option struct {
+	c func(*Cache) error
+	m func(*SimpleMatcher)
+}
+
+// cache satisifies the Option interface.
+func (v option) cache(c *Cache) error {
+	if v.c == nil {
+		return errors.New("option not available for disk cache")
+	}
+	return v.c(c)
+}
+
+// simpleMatcher satisfies the Option interface.
+func (v option) simpleMatcher(m *SimpleMatcher) {
+	if v.m == nil {
+		panic(fmt.Sprintf("option not available for simple matcher"))
+	}
+	v.m(m)
+}
 
 // WithTransport is a disk cache option to set the underlying HTTP transport.
 func WithTransport(transport http.RoundTripper) Option {
-	return func(c *Cache) error {
-		c.transport = transport
-		return nil
+	return option{
+		c: func(c *Cache) error {
+			c.transport = transport
+			return nil
+		},
 	}
 }
 
 // WithMode is a disk cache option to set the file mode used when creating
 // files and directories on disk.
 func WithMode(dirMode, fileMode os.FileMode) Option {
-	return func(c *Cache) error {
-		c.dirMode, c.fileMode = dirMode, fileMode
-		return nil
+	return option{
+		c: func(c *Cache) error {
+			c.dirMode, c.fileMode = dirMode, fileMode
+			return nil
+		},
 	}
 }
 
@@ -256,136 +320,205 @@ func WithMode(dirMode, fileMode os.FileMode) Option {
 //
 // See: github.com/spf13/afero
 func WithFs(fs afero.Fs) Option {
-	return func(c *Cache) error {
-		c.fs = fs
-		return nil
+	return option{
+		c: func(c *Cache) error {
+			c.fs = fs
+			return nil
+		},
 	}
 }
 
 // WithBasePathFs is a disk cache option to set the Afero filesystem as an
 // Afero BasePathFs.
 func WithBasePathFs(basePath string) Option {
-	return func(c *Cache) error {
-		// ensure path exists and is directory
-		fi, err := os.Stat(basePath)
-		switch {
-		case err != nil && os.IsNotExist(err):
-			if err = os.MkdirAll(basePath, c.dirMode); err != nil {
+	return option{
+		c: func(c *Cache) error {
+			// ensure path exists and is directory
+			fi, err := os.Stat(basePath)
+			switch {
+			case err != nil && os.IsNotExist(err):
+				if err = os.MkdirAll(basePath, c.dirMode); err != nil {
+					return err
+				}
+			case err != nil:
+				return err
+			case err == nil && !fi.IsDir():
+				return fmt.Errorf("base path %s is not a directory", basePath)
+			}
+
+			// resolve real path
+			basePath, err = realpath.Realpath(basePath)
+			if err != nil {
 				return err
 			}
-		case err != nil:
-			return err
-		case err == nil && !fi.IsDir():
-			return fmt.Errorf("base path %s is not a directory", basePath)
-		}
-
-		// resolve real path
-		basePath, err = realpath.Realpath(basePath)
-		if err != nil {
-			return err
-		}
-		c.fs = afero.NewBasePathFs(afero.NewOsFs(), basePath)
-		return nil
+			c.fs = afero.NewBasePathFs(afero.NewOsFs(), basePath)
+			return nil
+		},
 	}
 }
 
 // WithMatchers is a disk cache option to set the matchers used.
 func WithMatchers(matchers ...Matcher) Option {
-	return func(c *Cache) error {
-		c.matchers = matchers
-		return nil
+	return option{
+		c: func(c *Cache) error {
+			c.matchers = matchers
+			return nil
+		},
 	}
 }
 
-// WithHeaderMungers is a disk cache option to set the header rewriters used.
-func WithHeaderMungers(headerMungers ...HeaderMunger) Option {
-	return func(c *Cache) error {
-		c.headerMungers = headerMungers
-		return nil
+// WithDefaultMatcher is a disk cache option to set the default matcher.
+func WithDefaultMatcher(matcher *SimpleMatcher) Option {
+	return option{
+		c: func(c *Cache) error {
+			c.matcher = matcher
+			return nil
+		},
+	}
+}
+
+// WithNoDefault is a disk cache option to disable the default matcher.
+func WithNoDefault() Option {
+	return option{
+		c: func(c *Cache) error {
+			c.noDefault = true
+			return nil
+		},
+	}
+}
+
+// WithHeaderTransformers is a disk cache option to set the header rewriters used.
+func WithHeaderTransformers(headerTransformers ...HeaderTransformer) Option {
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.HeaderTransformers = headerTransformers
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.HeaderTransformers = headerTransformers
+		},
 	}
 }
 
 // WithHeaderBlacklist is a disk cache option to set a header rewriter that
 // strips all headers in the blacklist.
 func WithHeaderBlacklist(blacklist ...string) Option {
-	return func(c *Cache) error {
-		headerMunger, err := stripHeaders(blacklist...)
-		if err != nil {
-			return err
-		}
-		c.headerMungers = append(c.headerMungers, headerMunger)
-		return nil
+	headerTransformer, err := stripHeaders(blacklist...)
+	if err != nil {
+		panic(err)
+	}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
+		},
 	}
 }
 
 // WithHeaderWhitelist is a disk cache option to set a header rewriter that
 // strips any headers not in the whitelist.
 func WithHeaderWhitelist(whitelist ...string) Option {
-	return func(c *Cache) error {
-		headerMunger, err := keepHeaders(whitelist...)
-		if err != nil {
-			return err
-		}
-		c.headerMungers = append(c.headerMungers, headerMunger)
-		return nil
+	headerTransformer, err := keepHeaders(whitelist...)
+	if err != nil {
+		panic(err)
+	}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
+		},
 	}
 }
 
-// WithHeaderMunger is a disk cache option to set pairs of matching and
+// WithHeaderTransform is a disk cache option to set pairs of matching and
 // replacement regexps that modify the header prior to storage on disk.
-func WithHeaderMunger(pairs ...string) Option {
-	return func(c *Cache) error {
-		headerMunger, err := NewHeaderMunger(pairs...)
-		if err != nil {
-			return err
-		}
-		c.headerMungers = append(c.headerMungers, headerMunger)
-		return nil
+func WithHeaderTransform(pairs ...string) Option {
+	headerTransformer, err := NewHeaderTransformer(pairs...)
+	if err != nil {
+		panic(err)
+	}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
+		},
 	}
 }
 
-// WithBodyMungers is a disk cache option to set the body mungers used.
-func WithBodyMungers(bodyMungers ...BodyMunger) Option {
-	return func(c *Cache) error {
-		c.bodyMungers = c.bodyMungers
-		return nil
+// WithBodyTransformers is a disk cache option to set the body transformers used.
+func WithBodyTransformers(bodyTransformers ...BodyTransformer) Option {
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.BodyTransformers = bodyTransformers
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.BodyTransformers = bodyTransformers
+		},
 	}
 }
 
-// WithMinifier is a disk cache option to add a body munger that does content
+// WithMinifier is a disk cache option to add a body transformer that does content
 // minification of HTML, XML, SVG, JavaScript, JSON, and CSS data to reduce
 // storage overhead.
 //
 // See: github.com/tdewolff/minify
 func WithMinifier() Option {
-	return func(c *Cache) error {
-		c.bodyMungers = append(c.bodyMungers, Minifier{
-			Priority: MungePriorityMinify,
-		})
-		return nil
+	z := Minifier{
+		Priority: TransformPriorityMinify,
+	}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, z)
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.BodyTransformers = append(m.policy.BodyTransformers, z)
+		},
 	}
 }
 
-// WithErrorTruncator is a disk cache option to add a body munger that
+// WithErrorTruncator is a disk cache option to add a body transformer that
 // truncates the response when the HTTP status code != OK (200).
 func WithErrorTruncator() Option {
-	return func(c *Cache) error {
-		c.bodyMungers = append(c.bodyMungers, ErrorTruncator{
-			Priority: MungePriorityFirst,
-		})
-		return nil
+	z := ErrorTruncator{
+		Priority: TransformPriorityFirst,
+	}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, z)
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.BodyTransformers = append(m.policy.BodyTransformers, z)
+		},
 	}
 }
 
-// WithBase64Decoder is a disk cache option to add a body munger that decodes
+// WithBase64Decoder is a disk cache option to add a body transformer that decodes
 func WithBase64Decoder(contentType string) Option {
-	return func(c *Cache) error {
-		c.bodyMungers = append(c.bodyMungers, Base64Decoder{
-			Priority:    MungePriorityDecode,
-			Encoding:    base64.StdEncoding,
-			ContentType: contentType,
-		})
-		return nil
+	z := Base64Decoder{
+		Priority:    TransformPriorityDecode,
+		Encoding:    base64.StdEncoding,
+		ContentType: contentType,
+	}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, z)
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.BodyTransformers = append(m.policy.BodyTransformers, z)
+		},
 	}
 }
 
@@ -395,43 +528,112 @@ func WithBase64Decoder(contentType string) Option {
 // Useful for decoding JavaScript or JSON data that has add a XSS prevention
 // prefixed to it (ie, ).
 func WithPrefixStripper(prefix []byte, contentType string) Option {
-	return func(c *Cache) error {
-		c.bodyMungers = append(c.bodyMungers, PrefixStripper{
-			Priority:    MungePriorityModify,
-			Prefix:      prefix,
-			ContentType: contentType,
-		})
-		return nil
+	z := PrefixStripper{
+		Priority:    TransformPriorityModify,
+		Prefix:      prefix,
+		ContentType: contentType,
+	}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, z)
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.BodyTransformers = append(m.policy.BodyTransformers, z)
+		},
 	}
 }
 
-// WithCompressDecompressor is a disk cache option to set a compression
+// WithMarshalUnmarshaler is a disk cache option to set a compression
 // handler.
-func WithCompressDecompressor(compressDecompressor CompressDecompressor) Option {
-	return func(c *Cache) error {
-		c.compressDecompressor = compressDecompressor
-		return nil
+func WithMarshalUnmarshaler(marshalUnmarshaler MarshalUnmarshaler) Option {
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.MarshalUnmarshaler = marshalUnmarshaler
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.MarshalUnmarshaler = marshalUnmarshaler
+		},
 	}
 }
 
 // WithGzipCompression is a disk cache option that stores/retrieves using gzip
 // compression.
 func WithGzipCompression() Option {
-	return func(c *Cache) error {
-		c.compressDecompressor = GzipCompressDecompressor{
-			Level: gzip.DefaultCompression,
-		}
-		return nil
+	z := GzipMarshalUnmarshaler{Level: gzip.DefaultCompression}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.MarshalUnmarshaler = z
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.MarshalUnmarshaler = z
+		},
 	}
 }
 
 // WithZlibCompression is a disk cache option that stores/retrieves using zlib
 // compression.
 func WithZlibCompression() Option {
-	return func(c *Cache) error {
-		c.compressDecompressor = ZlibCompressDecompressor{
-			Level: zlib.DefaultCompression,
+	z := ZlibMarshalUnmarshaler{Level: zlib.DefaultCompression}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.MarshalUnmarshaler = z
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.MarshalUnmarshaler = z
+		},
+	}
+}
+
+// WithTTL is a disk cache option to set the TTL policy for matches.
+func WithTTL(ttl time.Duration) Option {
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.TTL = ttl
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.TTL = ttl
+		},
+	}
+}
+
+// WithQueryEncoder is a disk cache option to set the query encoder.
+func WithQueryEncoder(queryEncoder func(url.Values) string) Option {
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.queryEncoder = queryEncoder
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+		},
+	}
+}
+
+// WithQueryPrefix is a disk cache option that sets a query encoder that does
+// canonical encoding, of query string values, additionally adding the prefix
+// when the encoded query string is non-empty.
+//
+// Optionally, the encoded query string can be filtered to only the specified
+// query string fields.
+func WithQueryPrefix(prefix string, fields ...string) Option {
+	f := func(v url.Values) string {
+		s := url.QueryEscape(v.Encode())
+		if s == "" {
+			return ""
 		}
-		return nil
+		return prefix + s
+	}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.queryEncoder = f
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.queryEncoder = f
+		},
 	}
 }

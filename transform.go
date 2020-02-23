@@ -20,29 +20,29 @@ import (
 	"github.com/tdewolff/minify/xml"
 )
 
-// HeaderMunger is the shared interface for modifying/altering headers prior
-// to storage on disk.
-type HeaderMunger interface {
-	HeaderMunge([]byte) []byte
+// HeaderTransformer is the shared interface for modifying/altering headers
+// prior to storage on disk.
+type HeaderTransformer interface {
+	HeaderTransform([]byte) []byte
 }
 
-// HeaderMungeFunc is a header rewriter func.
-type HeaderMungerFunc func([]byte) []byte
+// HeaderTransformerFunc is a header rewriter func.
+type HeaderTransformerFunc func([]byte) []byte
 
-// HeaderMunge satisfies the HeaderMunger interface.
-func (f HeaderMungerFunc) HeaderMunge(buf []byte) []byte {
+// HeaderTransformer satisfies the HeaderTransformer interface.
+func (f HeaderTransformerFunc) HeaderTransform(buf []byte) []byte {
 	return f(buf)
 }
 
-// RegexpHeaderMunger mangles headers matching regexps and replacements.
-type RegexpHeaderMunger struct {
+// RegexpHeaderTransformer mangles headers matching regexps and replacements.
+type RegexpHeaderTransformer struct {
 	Regexps []*regexp.Regexp
 	Repls   [][]byte
 }
 
-// NewHeaderMunger creates a new header munger from the passed matching
+// NewHeaderTransformer creates a new header transformer from the passed matching
 // regexp and replacement pairs.
-func NewHeaderMunger(pairs ...string) (*RegexpHeaderMunger, error) {
+func NewHeaderTransformer(pairs ...string) (*RegexpHeaderTransformer, error) {
 	n := len(pairs)
 	if n%2 != 0 {
 		return nil, errors.New("must have matching regexp and replacement pairs")
@@ -55,11 +55,11 @@ func NewHeaderMunger(pairs ...string) (*RegexpHeaderMunger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &RegexpHeaderMunger{Regexps: regexps, Repls: repls}, nil
+	return &RegexpHeaderTransformer{Regexps: regexps, Repls: repls}, nil
 }
 
-// HeaderMunge satisfies the HeaderMunger interface.
-func (m *RegexpHeaderMunger) HeaderMunge(buf []byte) []byte {
+// HeaderTransform satisfies the HeaderTransformer interface.
+func (m *RegexpHeaderTransformer) HeaderTransform(buf []byte) []byte {
 	lines := bytes.Split(buf, crlf)
 	for i := 1; i < len(lines)-2; i++ {
 		for j, re := range m.Regexps {
@@ -72,47 +72,47 @@ func (m *RegexpHeaderMunger) HeaderMunge(buf []byte) []byte {
 	return bytes.Join(lines, crlf)
 }
 
-// MungePriority is the body munge priority.
-type MungePriority int
+// TransformPriority is the body transform priority.
+type TransformPriority int
 
 // Body mangle priorities.
 const (
-	MungePriorityFirst  MungePriority = 10
-	MungePriorityDecode MungePriority = 50
-	MungePriorityModify MungePriority = 60
-	MungePriorityMinify MungePriority = 80
-	MungePriorityLast   MungePriority = 90
+	TransformPriorityFirst  TransformPriority = 10
+	TransformPriorityDecode TransformPriority = 50
+	TransformPriorityModify TransformPriority = 60
+	TransformPriorityMinify TransformPriority = 80
+	TransformPriorityLast   TransformPriority = 90
 )
 
-// BodyMunger is the shared interface for mangling body content prior to
+// BodyTransformer is the shared interface for mangling body content prior to
 // storage in the fs.
-type BodyMunger interface {
-	// MungePriority returns the order for the munger.
-	MungePriority() MungePriority
+type BodyTransformer interface {
+	// TransformPriority returns the order for the transformer.
+	TransformPriority() TransformPriority
 
-	// BodyMunge mangles data from r to w for the provided URL, status code,
+	// BodyTransforme mangles data from r to w for the provided URL, status code,
 	// and content type. A return of false prevents further passing the stream
-	// to lower priority body mungers.
-	BodyMunge(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error)
+	// to lower priority body transformers.
+	BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error)
 }
 
-// Minifier is a body munger that performs content minification, in
+// Minifier is a body transformer that performs content minification, in
 // order to reduce storage size on disk.
 //
 // Minifies HTML, XML, SVG, JavaScript, JSON, and CSS content.
 //
 // See: github.com/tdewolff/minify
 type Minifier struct {
-	Priority MungePriority
+	Priority TransformPriority
 }
 
-// MungePriority satisfies the Munger interface.
-func (m Minifier) MungePriority() MungePriority {
+// TransformPriority satisfies the Transformer interface.
+func (m Minifier) TransformPriority() TransformPriority {
 	return m.Priority
 }
 
-// BodyMunge satisfies the BodyMunger interface.
-func (m Minifier) BodyMunge(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+// BodyTransforme satisfies the BodyTransformer interface.
+func (m Minifier) BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
@@ -156,19 +156,19 @@ var (
 	xmlContentTypeRE  = regexp.MustCompile("[/+]xml$")
 )
 
-// ErrorTruncator is a body munger that truncates the body entirely when a non
+// ErrorTruncator is a body transformer that truncates the body entirely when a non
 // HTTP status OK (200) response is returned.
 type ErrorTruncator struct {
-	Priority MungePriority
+	Priority TransformPriority
 }
 
-// MungePriority satisfies the BodyMunger interface.
-func (m ErrorTruncator) MungePriority() MungePriority {
+// TransformPriority satisfies the BodyTransformer interface.
+func (m ErrorTruncator) TransformPriority() TransformPriority {
 	return m.Priority
 }
 
-// BodyMunge satisfies the BodyMunger interface.
-func (ErrorTruncator) BodyMunge(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+// BodyTransforme satisfies the BodyTransformer interface.
+func (ErrorTruncator) BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if code != http.StatusOK {
 		return false, nil
 	}
@@ -176,20 +176,20 @@ func (ErrorTruncator) BodyMunge(w io.Writer, r io.Reader, urlstr string, code in
 	return err == nil, err
 }
 
-// Base64Decoder is a body munger that base64 decodes the body.
+// Base64Decoder is a body transformer that base64 decodes the body.
 type Base64Decoder struct {
-	Priority    MungePriority
+	Priority    TransformPriority
 	Encoding    *base64.Encoding
 	ContentType string
 }
 
-// MungePriority satisfies the BodyMunger interface.
-func (m Base64Decoder) MungePriority() MungePriority {
+// TransformPriority satisfies the BodyTransformer interface.
+func (m Base64Decoder) TransformPriority() TransformPriority {
 	return m.Priority
 }
 
-// BodyMunge satisfies the BodyMunger interface.
-func (m Base64Decoder) BodyMunge(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+// BodyTransforme satisfies the BodyTransformer interface.
+func (m Base64Decoder) BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
@@ -206,23 +206,23 @@ func (m Base64Decoder) BodyMunge(w io.Writer, r io.Reader, urlstr string, code i
 	return err == nil, err
 }
 
-// PrefixStripper is a body munger that strips a prefix.
+// PrefixStripper is a body transformer that strips a prefix.
 //
 // Useful for munging content that may have had a preventative XSS prefix
 // attached to it, such as certan JavaScript or JSON content.
 type PrefixStripper struct {
-	Priority    MungePriority
+	Priority    TransformPriority
 	Prefix      []byte
 	ContentType string
 }
 
-// MungePriority satisfies the BodyMunger interface.
-func (m PrefixStripper) MungePriority() MungePriority {
+// TransformPriority satisfies the BodyTransformer interface.
+func (m PrefixStripper) TransformPriority() TransformPriority {
 	return m.Priority
 }
 
-// BodyMunge satisfies the BodyMunger interface.
-func (m PrefixStripper) BodyMunge(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+// BodyTransforme satisfies the BodyTransformer interface.
+func (m PrefixStripper) BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
