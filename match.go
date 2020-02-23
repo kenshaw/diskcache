@@ -9,13 +9,14 @@ import (
 	"github.com/gobwas/glob"
 )
 
-// Matcher is the shared interface for rewriting URLs to disk paths.
+// Matcher is the shared interface for retrivieving a disk cache policy for
+// requests.
 type Matcher interface {
 	// Match matches the passed request, returning the key and ttl.
 	Match(*http.Request) (string, Policy, error)
 }
 
-// SimpleMatcher is a simple path matcher.
+// SimpleMatcher handles matching caching policies to requests.
 type SimpleMatcher struct {
 	method       glob.Glob
 	host         *regexp.Regexp
