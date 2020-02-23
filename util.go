@@ -85,7 +85,7 @@ func init() {
 func transformAndAppend(buf []byte, r io.Reader, urlstr string, code int, contentType string, bodyTransformers ...BodyTransformer) ([]byte, error) {
 	for _, m := range bodyTransformers {
 		w := new(bytes.Buffer)
-		success, err := m.BodyTransforme(w, r, urlstr, code, contentType)
+		success, err := m.BodyTransform(w, r, urlstr, code, contentType)
 		if err != nil {
 			return nil, err
 		}

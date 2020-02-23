@@ -84,6 +84,16 @@ func (m *SimpleMatcher) Match(req *http.Request) (string, Policy, error) {
 
 // cache satisfies the Option interface.
 func (m *SimpleMatcher) cache(c *Cache) error {
+	if !c.noDefault {
+		if m.policy.TTL == 0 {
+			m.policy.TTL = c.matcher.policy.TTL
+		}
+		m.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, m.policy.HeaderTransformers...)
+		m.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, m.policy.BodyTransformers...)
+		if m.policy.MarshalUnmarshaler == nil {
+			m.policy.MarshalUnmarshaler = c.matcher.policy.MarshalUnmarshaler
+		}
+	}
 	c.matcher = m
 	return nil
 }

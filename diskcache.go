@@ -206,13 +206,14 @@ func (c *Cache) do(key string, m Policy, req *http.Request) (*bufio.Reader, erro
 	}
 
 	// store
-	if _, err = f.Write(buf); err != nil {
-		return nil, err
+	if len(buf) != 0 {
+		if _, err = f.Write(buf); err != nil {
+			return nil, err
+		}
+		if err = f.Close(); err != nil {
+			return nil, err
+		}
 	}
-	if err = f.Close(); err != nil {
-		return nil, err
-	}
-
 	return bufio.NewReader(bytes.NewReader(body)), nil
 }
 

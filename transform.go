@@ -40,8 +40,8 @@ type RegexpHeaderTransformer struct {
 	Repls   [][]byte
 }
 
-// NewHeaderTransformer creates a new header transformer from the passed matching
-// regexp and replacement pairs.
+// NewHeaderTransformer creates a new header transformer from the passed
+// matching regexp and replacement pairs.
 func NewHeaderTransformer(pairs ...string) (*RegexpHeaderTransformer, error) {
 	n := len(pairs)
 	if n%2 != 0 {
@@ -90,10 +90,10 @@ type BodyTransformer interface {
 	// TransformPriority returns the order for the transformer.
 	TransformPriority() TransformPriority
 
-	// BodyTransforme mangles data from r to w for the provided URL, status code,
-	// and content type. A return of false prevents further passing the stream
-	// to lower priority body transformers.
-	BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error)
+	// BodyTransform mangles data from r to w for the provided URL, status
+	// code, and content type. A return of false prevents further passing the
+	// stream to lower priority body transformers.
+	BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error)
 }
 
 // Minifier is a body transformer that performs content minification, in
@@ -111,8 +111,8 @@ func (m Minifier) TransformPriority() TransformPriority {
 	return m.Priority
 }
 
-// BodyTransforme satisfies the BodyTransformer interface.
-func (m Minifier) BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+// BodyTransform satisfies the BodyTransformer interface.
+func (m Minifier) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
@@ -167,8 +167,8 @@ func (m ErrorTruncator) TransformPriority() TransformPriority {
 	return m.Priority
 }
 
-// BodyTransforme satisfies the BodyTransformer interface.
-func (ErrorTruncator) BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+// BodyTransform satisfies the BodyTransformer interface.
+func (ErrorTruncator) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if code != http.StatusOK {
 		return false, nil
 	}
@@ -188,8 +188,8 @@ func (m Base64Decoder) TransformPriority() TransformPriority {
 	return m.Priority
 }
 
-// BodyTransforme satisfies the BodyTransformer interface.
-func (m Base64Decoder) BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+// BodyTransform satisfies the BodyTransformer interface.
+func (m Base64Decoder) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
@@ -221,8 +221,8 @@ func (m PrefixStripper) TransformPriority() TransformPriority {
 	return m.Priority
 }
 
-// BodyTransforme satisfies the BodyTransformer interface.
-func (m PrefixStripper) BodyTransforme(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+// BodyTransform satisfies the BodyTransformer interface.
+func (m PrefixStripper) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
