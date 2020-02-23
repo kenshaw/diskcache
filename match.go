@@ -94,7 +94,7 @@ func (m *SimpleMatcher) cache(c *Cache) error {
 			m.policy.MarshalUnmarshaler = c.matcher.policy.MarshalUnmarshaler
 		}
 	}
-	c.matcher = m
+	c.matchers = append(c.matchers, m)
 	return nil
 }
 
