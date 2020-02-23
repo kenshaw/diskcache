@@ -19,7 +19,7 @@ func main() {
 		diskcache.WithTTL(365*24*time.Hour),
 		diskcache.WithHeaderWhitelist("Date", "Set-Cookie", "Content-Type"),
 		diskcache.WithHeaderTransform(
-			`Date:(\s+).+?`, `Date:${1}TODAY`,
+			`Date:\s+(.+?)`, `Date: Not "$1"`,
 		),
 		diskcache.WithMinifier(),
 		diskcache.WithErrorTruncator(),

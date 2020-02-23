@@ -1,15 +1,23 @@
 # diskcache [![GoDoc][godoc]][godoc-link]
 
-Package `diskcache` provides a [`http.RoundTripper`][go-http-roundtripper] (for
-use as a `http.Client.Transport`), that caches data on disk, or on any
-[`afero.Fs`][afero] compatible implementation. Provides simple minification for
-web content (HTML, CSS, JavaScript, etc), and compression/decompression to
-reduce storage size on disk.
+Package `diskcache` provides a standard Go HTTP transport
+([`http.RoundTripper`][go-http-roundtripper]) implementation able to cache,
+minify, compress, and transform HTTP responses on disk. Allows definition of
+caching policies on a per-method, per-host, or per-path basis.
+
+Provides a number of content transformers that alter cached HTTP response
+headers and bodies (prior to storage on disk) including rewriting or
+white/black-listing headers, stripping XSS prefixes, Base64 encoding/decoding,
+webpage content minification, Gzip/Zlib compression, and more.
+
+Package `diskcache` does not aim to work as a on-disk HTTP proxy. See
+[github.com/gregjones/httpcache][httpcache] for a HTTP transport implementation
+that provides a RFC 7234 compliant cache.
 
 [godoc]: https://godoc.org/github.com/kenshaw/diskcache?status.svg (GoDoc)
 [godoc-link]: https://godoc.org/github.com/kenshaw/diskcache
 
-# Example
+## Example
 
 A basic Go example:
 
@@ -35,7 +43,7 @@ func main() {
 		diskcache.WithTTL(365*24*time.Hour),
 		diskcache.WithHeaderWhitelist("Date", "Set-Cookie", "Content-Type"),
 		diskcache.WithHeaderTransform(
-			`Date:(\s+).+?`, `Date:${1}TODAY`,
+			`Date:\s+(.+?)`, `Date: Not "$1"`,
 		),
 		diskcache.WithMinifier(),
 		diskcache.WithErrorTruncator(),
@@ -88,27 +96,27 @@ func grab(cl *http.Client, method, urlstr string, id int) error {
 }
 ```
 
-## "Why not X?" and other thoughts
+See the [GoDoc listing][godoc] for more examples.
 
-There are existing `http.Client.Transport` implementations, such as
-[`httpcache`][httpcache] that have been around for sometime. While `httpcache`
-(and others) work perfectly well, `httpcache` mimics an actual HTTP Proxy and
-thus allows the remote server to influence caching behavior (which `diskcache`
-expressly ignores), does not work with `afero` package, and does not provide
-simple/reusable ways to rewrite paths on disk.
+## Notes
 
-`diskcache` was born out of general experimentation and necessity to control
-retention and path rewriting policies on a per-method, per-host, and per-path
-basis. To that end, I have made `diskcache` public in case it is helpful to
-other people/projects.
+Prior to writing `diskcache`, a number of the available HTTP transports were
+were investigated to see if they could met the specific needs that `diskcache`
+was designed for. In fact, it was found that many (notably [`httpcache`][httpcache]),
+it was possible to accomplish what `diskcache` was designed for. However, it
+required additional dependencies on non-standard (or uncommon) packages,
+layering disk storage, or overcoming additional technical hurdles or obstacles
+such as non-idiomatic code/design.
 
-It is my full intention to support `diskcache` and continue to add features,
-resiliency, and robustness comparable to `httpcache` (just with more
-configuration options out of the box!). That said, by no means should
-`diskcache` be considered ready for general use in production by others at this
-time. If you need a tried, tested, and true HTTP cache, please use
-[`httpcache`][httpcache] until such time when this package is truly ready.
+In short, no other packages were deemed to work "out-of-the-box", and thus
+`diskcache` was born. `diskcache` has been made public in case it proves useful
+to others.
 
+`diskcache` *SHOULD NOT* be considered ready for general use in production by
+others at this time. If you need a tried, tested, and true caching transport
+layer for Go, please use [`httpcache`][httpcache].
+
+[go-http-roundtripper]: https://golang.org/pkg/net/http/#RoundTripper
 [httpcache]: https://github.com/gregjones/httpcache
 [afero]: https://github.com/spf13/afero
-[go-http-roundtripper]: https://golang.org/pkg/net/http/#RoundTripper
+[minify]: https://github.com/tdewolff/minify
