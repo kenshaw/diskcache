@@ -682,9 +682,11 @@ func WithQueryEncoder(queryEncoder func(url.Values) string) Option {
 // The query string encoder can be limited to only the passed fields.
 func WithQueryPrefix(prefix string, fields ...string) Option {
 	f := func(v url.Values) string {
-		for k := range v {
-			if !contains(fields, k) {
-				delete(v, k)
+		if len(fields) > 0 {
+			for k := range v {
+				if !contains(fields, k) {
+					delete(v, k)
+				}
 			}
 		}
 		if s := url.QueryEscape(v.Encode()); s != "" {
