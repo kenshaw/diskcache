@@ -3,7 +3,6 @@ package diskcache
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"regexp"
 )
 
@@ -20,8 +19,10 @@ func compileHeaderRegexps(suffix string, headers ...string) ([]*regexp.Regexp, e
 	return regexps, nil
 }
 
-// crlf is the line ending.
-var crlf = []byte{'\r', '\n'}
+// various byte slices.
+var crlf = []byte("\r\n")
+var crlfcrlf = []byte("\r\n\r\n")
+var httpHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
 
 // keepHeaders builds a func that removes all non-matching headers.
 func keepHeaders(headers ...string) (HeaderTransformerFunc, error) {
@@ -93,9 +94,20 @@ func transformAndAppend(buf []byte, r io.Reader, urlstr string, code int, conten
 			break
 		}
 	}
-	body, err := ioutil.ReadAll(r)
+	body := new(bytes.Buffer)
+	_, err := io.Copy(body, r)
 	if err != nil {
 		return nil, err
 	}
-	return append(stripContentLengthHeader(buf), body...), nil
+	return append(stripContentLengthHeader(buf), body.Bytes()...), nil
+}
+
+// contains determines if haystack contains needle.
+func contains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }

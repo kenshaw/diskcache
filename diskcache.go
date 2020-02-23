@@ -558,10 +558,12 @@ func WithMarshalUnmarshaler(marshalUnmarshaler MarshalUnmarshaler) Option {
 	}
 }
 
-// WithGzipCompression is a disk cache option that stores/retrieves using gzip
+// WithGzipCompression is a disk cache option that marshals/unmarshals using gzip
 // compression.
 func WithGzipCompression() Option {
-	z := GzipMarshalUnmarshaler{Level: gzip.DefaultCompression}
+	z := GzipMarshalUnmarshaler{
+		Level: gzip.DefaultCompression,
+	}
 	return option{
 		c: func(c *Cache) error {
 			c.matcher.policy.MarshalUnmarshaler = z
@@ -573,10 +575,12 @@ func WithGzipCompression() Option {
 	}
 }
 
-// WithZlibCompression is a disk cache option that stores/retrieves using zlib
+// WithZlibCompression is a disk cache option that marshals/unmarshals using zlib
 // compression.
 func WithZlibCompression() Option {
-	z := ZlibMarshalUnmarshaler{Level: zlib.DefaultCompression}
+	z := ZlibMarshalUnmarshaler{
+		Level: zlib.DefaultCompression,
+	}
 	return option{
 		c: func(c *Cache) error {
 			c.matcher.policy.MarshalUnmarshaler = z
@@ -586,6 +590,61 @@ func WithZlibCompression() Option {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
+}
+
+// WithFlatStorage is a disk cache option that marshals/unmarshals responses,
+// without the response header.
+//
+// Note: cached responses will not have the original headers restored.
+func WithFlatStorage() Option {
+	z := FlatMarshalUnmarshaler{}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.MarshalUnmarshaler = z
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.MarshalUnmarshaler = z
+		},
+	}
+}
+
+// WithFlatChain is a disk cache option that marshals/unmarshals responses,
+// without the response header, and chaining marshaling/unmarshaling to the
+// provided marshaler/unmarshaler.
+//
+// Note: cached responses will not have the original headers restored.
+func WithFlatChain(marshalUnmarshaler MarshalUnmarshaler) Option {
+	z := FlatMarshalUnmarshaler{Chain: marshalUnmarshaler}
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.policy.MarshalUnmarshaler = z
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.policy.MarshalUnmarshaler = z
+		},
+	}
+}
+
+// WithFlatGzipCompression is a disk cache option that marshals/unmarshals
+// responses without the response header, and with gzip compression.
+//
+// Note: cached responses will not have the original headers restored.
+func WithFlatGzipCompression() Option {
+	return WithFlatChain(GzipMarshalUnmarshaler{
+		Level: gzip.DefaultCompression,
+	})
+}
+
+// WithFlatZlibCompression is a disk cache option that marshals/unmarshals
+// responses without the response header, and with zlib compression.
+//
+// Note: cached responses will not have the original headers restored.
+func WithFlatZlibCompression() Option {
+	return WithFlatChain(ZlibMarshalUnmarshaler{
+		Level: zlib.DefaultCompression,
+	})
 }
 
 // WithTTL is a disk cache option to set the TTL policy for matches.
@@ -621,11 +680,15 @@ func WithQueryEncoder(queryEncoder func(url.Values) string) Option {
 // query string fields.
 func WithQueryPrefix(prefix string, fields ...string) Option {
 	f := func(v url.Values) string {
-		s := url.QueryEscape(v.Encode())
-		if s == "" {
-			return ""
+		for k := range v {
+			if !contains(fields, k) {
+				delete(v, k)
+			}
 		}
-		return prefix + s
+		if s := url.QueryEscape(v.Encode()); s != "" {
+			return prefix + s
+		}
+		return ""
 	}
 	return option{
 		c: func(c *Cache) error {

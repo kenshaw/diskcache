@@ -1,8 +1,10 @@
 package diskcache
 
 import (
+	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"errors"
 	"io"
 )
 
@@ -73,6 +75,46 @@ func (z ZlibMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
 	return err
 }
 
-// FlatMarshalUnmarshaler is a flat file mashaler/unmarshaler, that
-// removes / restores the HTTP header.
-type FlatMarshalUnmarshaler struct{}
+// FlatMarhsalUnmarshaler is a flat file marshaler/unmarshaler, dropping
+// original response header when marshaling.
+type FlatMarshalUnmarshaler struct {
+	// Chain is an additional MarshalUnmarshaler that the data can be sent to
+	// prior to storage on disk, but after the header has been stripped.
+	Chain MarshalUnmarshaler
+}
+
+// Marshal satisfies the MarshalUnmarshaler interface.
+func (z FlatMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
+	b := new(bytes.Buffer)
+	_, err := io.Copy(b, r)
+	if err != nil {
+		return err
+	}
+	buf := b.Bytes()
+	i := bytes.Index(buf, append(crlf, crlf...))
+	if i == -1 {
+		return errors.New("unable to find header/body boundary")
+	}
+	if z.Chain == nil {
+		_, err = w.Write(buf[i+4:])
+		return err
+	}
+	return z.Chain.Marshal(w, bytes.NewReader(buf[i+4:]))
+}
+
+// Unmarshal satisfies the MarshalUnmarshaler interface.
+func (z FlatMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
+	if z.Chain != nil {
+		b := new(bytes.Buffer)
+		if err := z.Chain.Unmarshal(b, r); err != nil {
+			return err
+		}
+		r = b
+	}
+	_, err := w.Write(httpHeader)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(w, r)
+	return err
+}
