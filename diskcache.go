@@ -112,7 +112,7 @@ func New(opts ...Option) (*Cache, error) {
 
 // RoundTrip satisfies the http.RoundTripper interface.
 func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
-	key, m, err := c.Match(req)
+	key, p, err := c.Match(req)
 	if err != nil {
 		return nil, err
 	}
@@ -136,16 +136,16 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 	case fi.IsDir():
 		return nil, fmt.Errorf("fs path %q is a directory", key)
 	default:
-		if m.TTL != 0 && time.Now().After(fi.ModTime().Add(m.TTL)) {
+		if p.TTL != 0 && time.Now().After(fi.ModTime().Add(p.TTL)) {
 			stale = true
 		}
 	}
 
 	var r *bufio.Reader
 	if stale {
-		r, err = c.do(key, m, req)
+		r, err = c.do(key, p, req)
 	} else {
-		r, err = c.load(key, m)
+		r, err = c.load(key, p)
 	}
 	if err != nil {
 		return nil, err
@@ -155,7 +155,7 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // do executes the request, applying header and body transformers, before
 // marshaling and storing the response.
-func (c *Cache) do(key string, m Policy, req *http.Request) (*bufio.Reader, error) {
+func (c *Cache) do(key string, p Policy, req *http.Request) (*bufio.Reader, error) {
 	transport := c.transport
 	if transport == nil {
 		transport = http.DefaultTransport
@@ -174,21 +174,21 @@ func (c *Cache) do(key string, m Policy, req *http.Request) (*bufio.Reader, erro
 		return nil, err
 	}
 	buf = stripTransferEncodingHeader(buf)
-	for _, hr := range m.HeaderTransformers {
+	for _, hr := range p.HeaderTransformers {
 		buf = hr.HeaderTransform(buf)
 	}
 
 	// apply body transforms
-	buf, err = transformAndAppend(buf, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type"), m.BodyTransformers...)
+	buf, err = transformAndAppend(buf, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type"), p.BodyTransformers...)
 	if err != nil {
 		return nil, err
 	}
 	body := buf
 
 	// marshal
-	if m.MarshalUnmarshaler != nil {
+	if p.MarshalUnmarshaler != nil {
 		b := new(bytes.Buffer)
-		if err = m.MarshalUnmarshaler.Marshal(b, bytes.NewReader(buf)); err != nil {
+		if err = p.MarshalUnmarshaler.Marshal(b, bytes.NewReader(buf)); err != nil {
 			return nil, err
 		}
 		buf = b.Bytes()
@@ -216,16 +216,16 @@ func (c *Cache) do(key string, m Policy, req *http.Request) (*bufio.Reader, erro
 }
 
 // load reads the stored data on disk and unmarshals the response.
-func (c *Cache) load(key string, m Policy) (*bufio.Reader, error) {
+func (c *Cache) load(key string, p Policy) (*bufio.Reader, error) {
 	var err error
 	var r io.Reader
 	r, err = c.fs.OpenFile(key, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
-	if m.MarshalUnmarshaler != nil {
+	if p.MarshalUnmarshaler != nil {
 		b := new(bytes.Buffer)
-		if err = m.MarshalUnmarshaler.Unmarshal(b, r); err != nil {
+		if err = p.MarshalUnmarshaler.Unmarshal(b, r); err != nil {
 			return nil, err
 		}
 		r = b

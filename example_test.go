@@ -39,14 +39,7 @@ func ExampleNew() {
 		diskcache.WithMinifier(),
 		diskcache.WithErrorTruncator(),
 		diskcache.WithGzipCompression(),
-		diskcache.Match(
-			`GET`,
-			`^(?P<proto>https?)://(?P<host>[^:]+)(:[0-9]+)?$`,
-			`^/?(?P<path>.*)$`,
-			`{{proto}}/{{host}}/{{path}}{{query}}`,
-			diskcache.WithTTL(365*24*time.Hour),
-			diskcache.WithQueryPrefix("_"),
-		),
+		diskcache.WithTTL(365*24*time.Hour),
 	)
 	if err != nil {
 		panic(err)
