@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -78,6 +79,12 @@ func New(opts ...Option) (*Cache, error) {
 			`{{proto}}/{{host}}/{{path}}{{query}}`,
 			WithIndexPath("?index"),
 			WithQueryPrefix("_"),
+			WithLongPathHandler(func(key string) string {
+				if len(key) > 128 {
+					return fmt.Sprintf("?long/%x", sha256.Sum256([]byte(key)))
+				}
+				return key
+			}),
 		),
 	}
 	for _, o := range opts {
@@ -673,6 +680,19 @@ func WithIndexPath(indexPath string) Option {
 		},
 		m: func(m *SimpleMatcher) {
 			m.indexPath = indexPath
+		},
+	}
+}
+
+// WithLongPathHandler is a disk cache option to set a long path handler.
+func WithLongPathHandler(longPathHandler func(string) string) Option {
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.longPathHandler = longPathHandler
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.longPathHandler = longPathHandler
 		},
 	}
 }

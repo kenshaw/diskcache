@@ -18,15 +18,16 @@ type Matcher interface {
 
 // SimpleMatcher handles matching caching policies to requests.
 type SimpleMatcher struct {
-	method       glob.Glob
-	host         *regexp.Regexp
-	hostSubexps  []string
-	path         *regexp.Regexp
-	pathSubexps  []string
-	key          string
-	indexPath    string
-	queryEncoder func(url.Values) string
-	policy       Policy
+	method          glob.Glob
+	host            *regexp.Regexp
+	hostSubexps     []string
+	path            *regexp.Regexp
+	pathSubexps     []string
+	key             string
+	indexPath       string
+	longPathHandler func(string) string
+	queryEncoder    func(url.Values) string
+	policy          Policy
 }
 
 // Match creates a new simple match for the provided method, host, path, and
@@ -83,7 +84,11 @@ func (m *SimpleMatcher) Match(req *http.Request) (string, Policy, error) {
 	if key == "" || strings.HasSuffix(key, "/") {
 		key += m.indexPath
 	}
-	return strings.TrimSuffix(fixRE.ReplaceAllString(key, "/"), "/"), m.policy, nil
+	key = strings.TrimSuffix(fixRE.ReplaceAllString(key, "/"), "/")
+	if m.longPathHandler != nil {
+		key = m.longPathHandler(key)
+	}
+	return key, m.policy, nil
 }
 
 // cache satisfies the Option interface.
