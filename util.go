@@ -108,3 +108,13 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// intcontains determines if haystack contains needle.
+func intcontains(haystack []int, needle int) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}

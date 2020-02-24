@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -18,6 +17,18 @@ import (
 	"github.com/tdewolff/minify/json"
 	"github.com/tdewolff/minify/svg"
 	"github.com/tdewolff/minify/xml"
+)
+
+// TransformPriority is the body transform priority.
+type TransformPriority int
+
+// Body mangle priorities.
+const (
+	TransformPriorityFirst  TransformPriority = 10
+	TransformPriorityDecode TransformPriority = 50
+	TransformPriorityModify TransformPriority = 60
+	TransformPriorityMinify TransformPriority = 80
+	TransformPriorityLast   TransformPriority = 90
 )
 
 // HeaderTransformer is the shared interface for modifying/altering headers
@@ -59,30 +70,18 @@ func NewHeaderTransformer(pairs ...string) (*RegexpHeaderTransformer, error) {
 }
 
 // HeaderTransform satisfies the HeaderTransformer interface.
-func (m *RegexpHeaderTransformer) HeaderTransform(buf []byte) []byte {
+func (t *RegexpHeaderTransformer) HeaderTransform(buf []byte) []byte {
 	lines := bytes.Split(buf, crlf)
 	for i := 1; i < len(lines)-2; i++ {
-		for j, re := range m.Regexps {
+		for j, re := range t.Regexps {
 			line := append(crlf, append(lines[i], crlf...)...)
 			if re.Match(line) {
-				lines[i] = bytes.TrimSuffix(re.ReplaceAll(line, m.Repls[j]), crlf)
+				lines[i] = bytes.TrimSuffix(re.ReplaceAll(line, t.Repls[j]), crlf)
 			}
 		}
 	}
 	return bytes.Join(lines, crlf)
 }
-
-// TransformPriority is the body transform priority.
-type TransformPriority int
-
-// Body mangle priorities.
-const (
-	TransformPriorityFirst  TransformPriority = 10
-	TransformPriorityDecode TransformPriority = 50
-	TransformPriorityModify TransformPriority = 60
-	TransformPriorityMinify TransformPriority = 80
-	TransformPriorityLast   TransformPriority = 90
-)
 
 // BodyTransformer is the shared interface for mangling body content prior to
 // storage in the fs.
@@ -107,12 +106,12 @@ type Minifier struct {
 }
 
 // TransformPriority satisfies the Transformer interface.
-func (m Minifier) TransformPriority() TransformPriority {
-	return m.Priority
+func (t Minifier) TransformPriority() TransformPriority {
+	return t.Priority
 }
 
 // BodyTransform satisfies the BodyTransformer interface.
-func (m Minifier) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+func (t Minifier) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
@@ -156,20 +155,21 @@ var (
 	xmlContentTypeRE  = regexp.MustCompile("[/+]xml$")
 )
 
-// ErrorTruncator is a body transformer that truncates the body entirely when a non
-// HTTP status OK (200) response is returned.
-type ErrorTruncator struct {
+// Truncator is a body transformer that truncates responses based on match
+// criteria.
+type Truncator struct {
 	Priority TransformPriority
+	Match    func(string, int, string) bool
 }
 
 // TransformPriority satisfies the BodyTransformer interface.
-func (m ErrorTruncator) TransformPriority() TransformPriority {
-	return m.Priority
+func (t Truncator) TransformPriority() TransformPriority {
+	return t.Priority
 }
 
 // BodyTransform satisfies the BodyTransformer interface.
-func (ErrorTruncator) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
-	if code != http.StatusOK {
+func (t Truncator) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+	if t.Match(urlstr, code, contentType) {
 		return false, nil
 	}
 	_, err := io.Copy(w, r)
@@ -184,20 +184,20 @@ type Base64Decoder struct {
 }
 
 // TransformPriority satisfies the BodyTransformer interface.
-func (m Base64Decoder) TransformPriority() TransformPriority {
-	return m.Priority
+func (t Base64Decoder) TransformPriority() TransformPriority {
+	return t.Priority
 }
 
 // BodyTransform satisfies the BodyTransformer interface.
-func (m Base64Decoder) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+func (t Base64Decoder) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
-	if m.ContentType != contentType {
+	if t.ContentType != contentType {
 		_, err := io.Copy(w, r)
 		return err == nil, err
 	}
-	encoding := m.Encoding
+	encoding := t.Encoding
 	if encoding == nil {
 		encoding = base64.StdEncoding
 	}
@@ -211,22 +211,22 @@ func (m Base64Decoder) BodyTransform(w io.Writer, r io.Reader, urlstr string, co
 // Useful for munging content that may have had a preventative XSS prefix
 // attached to it, such as certan JavaScript or JSON content.
 type PrefixStripper struct {
-	Priority    TransformPriority
-	Prefix      []byte
-	ContentType string
+	Priority     TransformPriority
+	Prefix       []byte
+	ContentTypes []string
 }
 
 // TransformPriority satisfies the BodyTransformer interface.
-func (m PrefixStripper) TransformPriority() TransformPriority {
-	return m.Priority
+func (t PrefixStripper) TransformPriority() TransformPriority {
+	return t.Priority
 }
 
 // BodyTransform satisfies the BodyTransformer interface.
-func (m PrefixStripper) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
+func (t PrefixStripper) BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error) {
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
-	if m.ContentType != contentType {
+	if !contains(t.ContentTypes, contentType) {
 		_, err := io.Copy(w, r)
 		return err == nil, err
 	}
@@ -235,9 +235,9 @@ func (m PrefixStripper) BodyTransform(w io.Writer, r io.Reader, urlstr string, c
 		return false, err
 	}
 	buf := b.Bytes()
-	if !bytes.HasPrefix(buf, m.Prefix) {
-		return false, fmt.Errorf("missing prefix %q", string(m.Prefix))
+	if !bytes.HasPrefix(buf, t.Prefix) {
+		return false, fmt.Errorf("missing prefix %q", string(t.Prefix))
 	}
-	_, err := w.Write(buf[len(m.Prefix):])
+	_, err := w.Write(buf[len(t.Prefix):])
 	return err == nil, err
 }
