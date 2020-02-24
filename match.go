@@ -24,9 +24,9 @@ type SimpleMatcher struct {
 	path         *regexp.Regexp
 	pathSubexps  []string
 	key          string
+	indexPath    string
 	queryEncoder func(url.Values) string
-
-	policy Policy
+	policy       Policy
 }
 
 // Match creates a new simple match for the provided method, host, path, and
@@ -80,6 +80,9 @@ func (m *SimpleMatcher) Match(req *http.Request) (string, Policy, error) {
 		pairs = append(pairs, "{{query}}", m.queryEncoder(req.URL.Query()))
 	}
 	key := strings.NewReplacer(pairs...).Replace(m.key)
+	if key == "" || strings.HasSuffix(key, "/") {
+		key += m.indexPath
+	}
 	return strings.TrimSuffix(fixRE.ReplaceAllString(key, "/"), "/"), m.policy, nil
 }
 

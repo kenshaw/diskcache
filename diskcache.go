@@ -76,6 +76,7 @@ func New(opts ...Option) (*Cache, error) {
 			`^(?P<proto>https?)://(?P<host>[^:]+)(:[0-9]+)?$`,
 			`^/?(?P<path>.*)$`,
 			`{{proto}}/{{host}}/{{path}}{{query}}`,
+			WithIndexPath("?index"),
 			WithQueryPrefix("_"),
 		),
 	}
@@ -659,6 +660,19 @@ func WithTTL(ttl time.Duration) Option {
 		},
 		m: func(m *SimpleMatcher) {
 			m.policy.TTL = ttl
+		},
+	}
+}
+
+// WithIndexPath is a disk cache option to set the index path name.
+func WithIndexPath(indexPath string) Option {
+	return option{
+		c: func(c *Cache) error {
+			c.matcher.indexPath = indexPath
+			return nil
+		},
+		m: func(m *SimpleMatcher) {
+			m.indexPath = indexPath
 		},
 	}
 }
