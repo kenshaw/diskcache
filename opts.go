@@ -245,7 +245,7 @@ func WithMinifier() Option {
 
 // WithTruncator is a disk cache option to add a body transformer that
 // truncates responses based on match criteria.
-func WithTrucator(priority TransformPriority, match func(string, int, string) bool) Option {
+func WithTruncator(priority TransformPriority, match func(string, int, string) bool) Option {
 	t := Truncator{
 		Priority: priority,
 		Match:    match,

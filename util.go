@@ -8,7 +8,6 @@ import (
 
 // various byte slices.
 var crlf = []byte("\r\n")
-var crlfcrlf = []byte("\r\n\r\n")
 var httpHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
 
 // predefined header strip funcs.
