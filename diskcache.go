@@ -192,7 +192,11 @@ func (c *Cache) Cached(req *http.Request) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return c.Stale(key, p.TTL)
+	stale, err := c.Stale(key, p.TTL)
+	if err != nil {
+		return false, err
+	}
+	return !stale, nil
 }
 
 // Load unmarshals and loads the cached response for the provided key and cache
