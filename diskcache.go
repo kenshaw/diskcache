@@ -139,6 +139,62 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 	return c.Exec(key, p, req)
 }
 
+// Match finds the first matching cache policy for the request.
+func (c *Cache) Match(req *http.Request) (string, Policy, error) {
+	matchers := c.matchers
+	if !c.noDefault {
+		matchers = append(matchers, c.matcher)
+	}
+	for _, m := range matchers {
+		key, p, err := m.Match(req)
+		if err != nil {
+			return "", Policy{}, err
+		}
+		if key != "" {
+			return key, p, nil
+		}
+	}
+	return "", Policy{}, nil
+}
+
+// Evict forces a cache eviction (deletion) for the key matching the request.
+func (c *Cache) Evict(req *http.Request) error {
+	key, _, err := c.Match(req)
+	if err != nil {
+		return err
+	}
+	return c.EvictKey(key)
+}
+
+// Evict forces a cache eviction (deletion) of the specified key.
+func (c *Cache) EvictKey(key string) error {
+	return c.fs.Remove(key)
+}
+
+// Stale indicates whether or not the key is stale, based on the passed ttl.
+func (c *Cache) Stale(key string, ttl time.Duration) (bool, error) {
+	fi, err := c.fs.Stat(key)
+	switch {
+	case err != nil && os.IsNotExist(err):
+		return true, nil
+	case err != nil:
+		return false, err
+	case fi.IsDir():
+		return false, fmt.Errorf("fs path %q is a directory", key)
+	}
+	return ttl != 0 && time.Now().After(fi.ModTime().Add(ttl)), nil
+}
+
+// Cached returns whether or not the request is cached or not. Wraps Match,
+// Stale.
+func (c *Cache) Cached(req *http.Request) (bool, error) {
+	key, p, err := c.Match(req)
+	if err != nil {
+		return false, err
+	}
+	return c.Stale(key, p.TTL)
+}
+
 // Load unmarshals and loads the cached response for the provided key and cache
 // policy.
 func (c *Cache) Load(key string, p Policy, req *http.Request) (*http.Response, error) {
@@ -219,50 +275,4 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 		}
 	}
 	return http.ReadResponse(bufio.NewReader(bytes.NewReader(body)), req)
-}
-
-// Match finds the first matching cache policy for the request.
-func (c *Cache) Match(req *http.Request) (string, Policy, error) {
-	matchers := c.matchers
-	if !c.noDefault {
-		matchers = append(matchers, c.matcher)
-	}
-	for _, m := range matchers {
-		key, p, err := m.Match(req)
-		if err != nil {
-			return "", Policy{}, err
-		}
-		if key != "" {
-			return key, p, nil
-		}
-	}
-	return "", Policy{}, nil
-}
-
-// Evict forces a cache eviction (deletion) for the key matching the request.
-func (c *Cache) Evict(req *http.Request) error {
-	key, _, err := c.Match(req)
-	if err != nil {
-		return err
-	}
-	return c.EvictKey(key)
-}
-
-// Evict forces a cache eviction (deletion) of the specified key.
-func (c *Cache) EvictKey(key string) error {
-	return c.fs.Remove(key)
-}
-
-// Stale indicates whether or not the key is stale, based on the passed ttl.
-func (c *Cache) Stale(key string, ttl time.Duration) (bool, error) {
-	fi, err := c.fs.Stat(key)
-	switch {
-	case err != nil && os.IsNotExist(err):
-		return true, nil
-	case err != nil:
-		return false, err
-	case fi.IsDir():
-		return false, fmt.Errorf("fs path %q is a directory", key)
-	}
-	return ttl != 0 && time.Now().After(fi.ModTime().Add(ttl)), nil
 }
