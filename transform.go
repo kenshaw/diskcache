@@ -95,10 +95,8 @@ type BodyTransformer interface {
 	BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error)
 }
 
-// Minifier is a body transformer that performs content minification, in
-// order to reduce storage size on disk.
-//
-// Minifies HTML, XML, SVG, JavaScript, JSON, and CSS content.
+// Minifier is a body transformer that performs that minifies HTML, XML, SVG,
+// JavaScript, JSON, and CSS content.
 //
 // See: github.com/tdewolff/minify
 type Minifier struct {
@@ -178,9 +176,9 @@ func (t Truncator) BodyTransform(w io.Writer, r io.Reader, urlstr string, code i
 
 // Base64Decoder is a body transformer that base64 decodes the body.
 type Base64Decoder struct {
-	Priority    TransformPriority
-	Encoding    *base64.Encoding
-	ContentType string
+	Priority     TransformPriority
+	ContentTypes []string
+	Encoding     *base64.Encoding
 }
 
 // TransformPriority satisfies the BodyTransformer interface.
@@ -193,7 +191,7 @@ func (t Base64Decoder) BodyTransform(w io.Writer, r io.Reader, urlstr string, co
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
-	if t.ContentType != contentType {
+	if len(t.ContentTypes) != 0 && !contains(t.ContentTypes, contentType) {
 		_, err := io.Copy(w, r)
 		return err == nil, err
 	}
@@ -212,8 +210,8 @@ func (t Base64Decoder) BodyTransform(w io.Writer, r io.Reader, urlstr string, co
 // attached to it, such as certan JavaScript or JSON content.
 type PrefixStripper struct {
 	Priority     TransformPriority
-	Prefix       []byte
 	ContentTypes []string
+	Prefix       []byte
 }
 
 // TransformPriority satisfies the BodyTransformer interface.
@@ -226,7 +224,7 @@ func (t PrefixStripper) BodyTransform(w io.Writer, r io.Reader, urlstr string, c
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
-	if !contains(t.ContentTypes, contentType) {
+	if len(t.ContentTypes) != 0 && !contains(t.ContentTypes, contentType) {
 		_, err := io.Copy(w, r)
 		return err == nil, err
 	}

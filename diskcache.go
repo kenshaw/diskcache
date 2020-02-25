@@ -128,36 +128,40 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		return transport.RoundTrip(req)
 	}
 
-	var stale bool
-	fi, err := c.fs.Stat(key)
-	switch {
-	case err != nil && os.IsNotExist(err):
-		stale = true
-	case err != nil:
-		return nil, err
-	case fi.IsDir():
-		return nil, fmt.Errorf("fs path %q is a directory", key)
-	default:
-		if p.TTL != 0 && time.Now().After(fi.ModTime().Add(p.TTL)) {
-			stale = true
-		}
-	}
-
-	var r *bufio.Reader
-	if stale {
-		r, err = c.do(key, p, req)
-	} else {
-		r, err = c.load(key, p)
-	}
+	// check stale
+	stale, err := c.Stale(key, p.TTL)
 	if err != nil {
 		return nil, err
 	}
-	return http.ReadResponse(r, req)
+	if !stale {
+		return c.Load(key, p, req)
+	}
+	return c.Exec(key, p, req)
 }
 
-// do executes the request, applying header and body transformers, before
-// marshaling and storing the response.
-func (c *Cache) do(key string, p Policy, req *http.Request) (*bufio.Reader, error) {
+// Load unmarshals and loads the cached response for the provided key and cache
+// policy.
+func (c *Cache) Load(key string, p Policy, req *http.Request) (*http.Response, error) {
+	var err error
+	var r io.Reader
+	r, err = c.fs.OpenFile(key, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	if p.MarshalUnmarshaler != nil {
+		b := new(bytes.Buffer)
+		if err = p.MarshalUnmarshaler.Unmarshal(b, r); err != nil {
+			return nil, err
+		}
+		r = b
+	}
+	return http.ReadResponse(bufio.NewReader(r), req)
+}
+
+// Exec executes the request storing the response using the provided key and
+// cache policy. Applies header and body transformers, before marshaling and
+// the response.
+func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, error) {
 	transport := c.transport
 	if transport == nil {
 		transport = http.DefaultTransport
@@ -176,8 +180,8 @@ func (c *Cache) do(key string, p Policy, req *http.Request) (*bufio.Reader, erro
 		return nil, err
 	}
 	buf = stripTransferEncodingHeader(buf)
-	for _, hr := range p.HeaderTransformers {
-		buf = hr.HeaderTransform(buf)
+	for _, t := range p.HeaderTransformers {
+		buf = t.HeaderTransform(buf)
 	}
 
 	// apply body transforms
@@ -214,25 +218,7 @@ func (c *Cache) do(key string, p Policy, req *http.Request) (*bufio.Reader, erro
 			return nil, err
 		}
 	}
-	return bufio.NewReader(bytes.NewReader(body)), nil
-}
-
-// load reads the stored data on disk and unmarshals the response.
-func (c *Cache) load(key string, p Policy) (*bufio.Reader, error) {
-	var err error
-	var r io.Reader
-	r, err = c.fs.OpenFile(key, os.O_RDONLY, 0)
-	if err != nil {
-		return nil, err
-	}
-	if p.MarshalUnmarshaler != nil {
-		b := new(bytes.Buffer)
-		if err = p.MarshalUnmarshaler.Unmarshal(b, r); err != nil {
-			return nil, err
-		}
-		r = b
-	}
-	return bufio.NewReader(r), nil
+	return http.ReadResponse(bufio.NewReader(bytes.NewReader(body)), req)
 }
 
 // Match finds the first matching cache policy for the request.
@@ -265,4 +251,18 @@ func (c *Cache) Evict(req *http.Request) error {
 // Evict forces a cache eviction (deletion) of the specified key.
 func (c *Cache) EvictKey(key string) error {
 	return c.fs.Remove(key)
+}
+
+// Stale indicates whether or not the key is stale, based on the passed ttl.
+func (c *Cache) Stale(key string, ttl time.Duration) (bool, error) {
+	fi, err := c.fs.Stat(key)
+	switch {
+	case err != nil && os.IsNotExist(err):
+		return true, nil
+	case err != nil:
+		return false, err
+	case fi.IsDir():
+		return false, fmt.Errorf("fs path %q is a directory", key)
+	}
+	return ttl != 0 && time.Now().After(fi.ModTime().Add(ttl)), nil
 }

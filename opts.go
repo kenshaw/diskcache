@@ -303,11 +303,11 @@ func WithErrorTruncator() Option {
 
 // WithBase64Decoder is a disk cache option to add a body transformer that does
 // base64 decoding of responses for specific content types.
-func WithBase64Decoder(contentType string) Option {
+func WithBase64Decoder(contentTypes ...string) Option {
 	t := Base64Decoder{
-		Priority:    TransformPriorityDecode,
-		Encoding:    base64.StdEncoding,
-		ContentType: contentType,
+		Priority:     TransformPriorityDecode,
+		ContentTypes: contentTypes,
+		Encoding:     base64.StdEncoding,
 	}
 	return option{
 		c: func(c *Cache) error {
@@ -327,8 +327,8 @@ func WithBase64Decoder(contentType string) Option {
 func WithPrefixStripper(prefix []byte, contentTypes ...string) Option {
 	t := PrefixStripper{
 		Priority:     TransformPriorityModify,
-		Prefix:       prefix,
 		ContentTypes: contentTypes,
+		Prefix:       prefix,
 	}
 	return option{
 		c: func(c *Cache) error {
