@@ -202,12 +202,12 @@ func (c *Cache) Cached(req *http.Request) (bool, error) {
 // Load unmarshals and loads the cached response for the provided key and cache
 // policy.
 func (c *Cache) Load(key string, p Policy, req *http.Request) (*http.Response, error) {
-	var err error
-	var r io.Reader
-	r, err = c.fs.OpenFile(key, os.O_RDONLY, 0)
+	f, err := c.fs.OpenFile(key, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
+	var r io.Reader = f
 	if p.MarshalUnmarshaler != nil {
 		b := new(bytes.Buffer)
 		if err = p.MarshalUnmarshaler.Unmarshal(b, r); err != nil {
