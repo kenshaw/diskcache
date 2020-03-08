@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
 	"os"
@@ -133,10 +134,10 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !stale {
-		return c.Load(key, p, req)
+	if stale {
+		return c.Exec(key, p, req)
 	}
-	return c.Exec(key, p, req)
+	return c.Load(key, p, req)
 }
 
 // Match finds the first matching cache policy for the request.
@@ -207,13 +208,19 @@ func (c *Cache) Load(key string, p Policy, req *http.Request) (*http.Response, e
 		return nil, err
 	}
 	defer f.Close()
-	var r io.Reader = f
-	if p.MarshalUnmarshaler != nil {
-		b := new(bytes.Buffer)
-		if err = p.MarshalUnmarshaler.Unmarshal(b, r); err != nil {
+	var r io.Reader
+	if p.MarshalUnmarshaler == nil {
+		buf, err := ioutil.ReadAll(f)
+		if err != nil {
 			return nil, err
 		}
-		r = b
+		r = bytes.NewReader(buf)
+	} else {
+		buf := new(bytes.Buffer)
+		if err = p.MarshalUnmarshaler.Unmarshal(buf, f); err != nil {
+			return nil, err
+		}
+		r = buf
 	}
 	return http.ReadResponse(bufio.NewReader(r), req)
 }

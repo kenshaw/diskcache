@@ -22,28 +22,29 @@ type GzipMarshalUnmarshaler struct {
 
 // Marshal satisfies the MarshalUnmarshaler interface.
 func (z GzipMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
-	c, err := gzip.NewWriterLevel(w, z.Level)
+	wr, err := gzip.NewWriterLevel(w, z.Level)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(c, r)
-	if err != nil {
+	if _, err = io.Copy(wr, r); err != nil {
 		return err
 	}
-	if err = c.Flush(); err != nil {
+	if err = wr.Flush(); err != nil {
 		return err
 	}
-	return c.Close()
+	return wr.Close()
 }
 
 // Unmarshal satisfies the MarshalUnmarshaler interface.
 func (z GzipMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
-	d, err := gzip.NewReader(r)
+	rd, err := gzip.NewReader(r)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(w, d)
-	return err
+	if _, err = io.Copy(w, rd); err != nil {
+		return err
+	}
+	return rd.Close()
 }
 
 // ZlibMarshalUnmarshaler is a zlib mashaler/unmarshaler.
@@ -57,22 +58,29 @@ type ZlibMarshalUnmarshaler struct {
 
 // Marshal satisfies the MarshalUnmarshaler interface.
 func (z ZlibMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
-	c, err := zlib.NewWriterLevelDict(w, z.Level, z.Dict)
+	wr, err := zlib.NewWriterLevelDict(w, z.Level, z.Dict)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(c, r)
-	return err
+	if _, err = io.Copy(wr, r); err != nil {
+		return err
+	}
+	if err = wr.Flush(); err != nil {
+		return err
+	}
+	return wr.Close()
 }
 
 // Unmarshal satisfies the MarshalUnmarshaler interface.
 func (z ZlibMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
-	d, err := zlib.NewReaderDict(r, z.Dict)
+	rd, err := zlib.NewReaderDict(r, z.Dict)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(w, d)
-	return err
+	if _, err = io.Copy(w, rd); err != nil {
+		return err
+	}
+	return rd.Close()
 }
 
 // FlatMarhsalUnmarshaler is a flat file marshaler/unmarshaler, dropping
@@ -85,9 +93,9 @@ type FlatMarshalUnmarshaler struct {
 
 // Marshal satisfies the MarshalUnmarshaler interface.
 func (z FlatMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
+	var err error
 	b := new(bytes.Buffer)
-	_, err := io.Copy(b, r)
-	if err != nil {
+	if _, err = io.Copy(b, r); err != nil {
 		return err
 	}
 	buf := b.Bytes()
