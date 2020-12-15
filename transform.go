@@ -88,17 +88,16 @@ func (t *RegexpHeaderTransformer) HeaderTransform(buf []byte) []byte {
 type BodyTransformer interface {
 	// TransformPriority returns the order for the transformer.
 	TransformPriority() TransformPriority
-
 	// BodyTransform mangles data from r to w for the provided URL, status
 	// code, and content type. A return of false prevents further passing the
 	// stream to lower priority body transformers.
 	BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error)
 }
 
-// Minifier is a body transformer that performs that minifies HTML, XML, SVG,
-// JavaScript, JSON, and CSS content.
+// Minifier is a body transformer that minifies HTML, XML, SVG, JavaScript,
+// JSON, and CSS content.
 //
-// See: github.com/tdewolff/minify
+// See: https://github.com/tdewolff/minify
 type Minifier struct {
 	Priority TransformPriority
 }
@@ -113,12 +112,10 @@ func (t Minifier) BodyTransform(w io.Writer, r io.Reader, urlstr string, code in
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
-
 	switch {
 	default:
 		_, err := io.Copy(w, r)
 		return err == nil, err
-
 	case contentType == "text/html",
 		contentType == "text/css",
 		contentType == "image/svg+xml",
@@ -126,7 +123,6 @@ func (t Minifier) BodyTransform(w io.Writer, r io.Reader, urlstr string, code in
 		jsonContentTypeRE.MatchString(contentType),
 		xmlContentTypeRE.MatchString(contentType):
 	}
-
 	z := minify.New()
 	z.AddFunc("text/html", html.Minify)
 	z.AddFunc("text/css", css.Minify)
@@ -207,7 +203,7 @@ func (t Base64Decoder) BodyTransform(w io.Writer, r io.Reader, urlstr string, co
 // PrefixStripper is a body transformer that strips a prefix.
 //
 // Useful for munging content that may have had a preventative XSS prefix
-// attached to it, such as certan JavaScript or JSON content.
+// attached to it, such as some JavaScript or JSON content.
 type PrefixStripper struct {
 	Priority     TransformPriority
 	ContentTypes []string

@@ -7,12 +7,17 @@ import (
 )
 
 // various byte slices.
-var crlf = []byte("\r\n")
-var httpHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
+var (
+	crlf       = []byte("\r\n")
+	crlfcrlf   = []byte("\r\n\r\n")
+	httpHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
+)
 
 // predefined header strip funcs.
-var stripTransferEncodingHeader func([]byte) []byte
-var stripContentLengthHeader func([]byte) []byte
+var (
+	stripTransferEncodingHeader func([]byte) []byte
+	stripContentLengthHeader    func([]byte) []byte
+)
 
 func init() {
 	var err error

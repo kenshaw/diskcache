@@ -32,13 +32,10 @@ import (
 type Policy struct {
 	// TTL is the time-to-live.
 	TTL time.Duration
-
 	// HeaderTransformers are the set of header transformers.
 	HeaderTransformers []HeaderTransformer
-
 	// BodyTransformers are the set of body tranformers.
 	BodyTransformers []BodyTransformer
-
 	// MarshalUnmarshaler is the marshal/unmarshaler responsible for storage on
 	// disk.
 	MarshalUnmarshaler MarshalUnmarshaler
@@ -51,10 +48,8 @@ type Cache struct {
 	fileMode  os.FileMode
 	fs        afero.Fs
 	noDefault bool
-
 	// matchers are the set of url matchers.
 	matchers []Matcher
-
 	// matcher is default matcher.
 	matcher *SimpleMatcher
 }
@@ -65,8 +60,8 @@ type Cache struct {
 // location using options.
 func New(opts ...Option) (*Cache, error) {
 	c := &Cache{
-		dirMode:  0755,
-		fileMode: 0644,
+		dirMode:  0o755,
+		fileMode: 0o644,
 		matcher: Match(
 			`GET`,
 			`^(?P<proto>https?)://(?P<host>[^:]+)(?P<port>:[0-9]+)?$`,
@@ -87,7 +82,6 @@ func New(opts ...Option) (*Cache, error) {
 			return nil, err
 		}
 	}
-
 	// set default fs as overlay at <working directory>/cache
 	if c.fs == nil {
 		dir, err := os.Getwd()
@@ -98,7 +92,6 @@ func New(opts ...Option) (*Cache, error) {
 			return nil, err
 		}
 	}
-
 	// ensure body transformers are in order.
 	for _, v := range append(c.matchers, c.matcher) {
 		m, ok := v.(*SimpleMatcher)
@@ -109,7 +102,6 @@ func New(opts ...Option) (*Cache, error) {
 			return m.policy.BodyTransformers[a].TransformPriority() < m.policy.BodyTransformers[b].TransformPriority()
 		})
 	}
-
 	return c, nil
 }
 
@@ -119,7 +111,6 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// no caching policy, pass to regular transport
 	if key == "" {
 		transport := c.transport
@@ -128,7 +119,6 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		return transport.RoundTrip(req)
 	}
-
 	// check stale
 	stale, err := c.Stale(key, p.TTL)
 	if err != nil {
@@ -233,14 +223,12 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-
 	// grab
 	res, err := transport.RoundTrip(req)
 	if err != nil {
 		return nil, err
 	}
 	defer res.Body.Close()
-
 	// dump and apply header tranforms
 	buf, err := httputil.DumpResponse(res, false)
 	if err != nil {
@@ -250,14 +238,12 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 	for _, t := range p.HeaderTransformers {
 		buf = t.HeaderTransform(buf)
 	}
-
 	// apply body transforms
 	buf, err = transformAndAppend(buf, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type"), p.BodyTransformers...)
 	if err != nil {
 		return nil, err
 	}
 	body := buf
-
 	// marshal
 	if p.MarshalUnmarshaler != nil {
 		b := new(bytes.Buffer)
@@ -266,7 +252,6 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 		}
 		buf = b.Bytes()
 	}
-
 	// store
 	if len(buf) != 0 {
 		// ensure path exists

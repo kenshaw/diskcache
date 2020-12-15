@@ -31,7 +31,6 @@ func ExampleNew() {
 `, req.URL.Query().Get("name"))
 	}))
 	defer s.Close()
-
 	// create disk cache
 	d, err := diskcache.New(
 		// diskcache.WithBasePathFs("/path/to/cacheDir"),
@@ -44,7 +43,6 @@ func ExampleNew() {
 	if err != nil {
 		panic(err)
 	}
-
 	// build and execute request
 	cl := &http.Client{Transport: d}
 	req, err := http.NewRequest("GET", s.URL+"/hello?name=ken", nil)
@@ -56,14 +54,12 @@ func ExampleNew() {
 		panic(err)
 	}
 	defer res.Body.Close()
-
 	// dump
 	buf, err := httputil.DumpResponse(res, true)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(string(bytes.Replace(buf, []byte("\r\n"), []byte("\n"), -1)))
-
+	fmt.Println(string(bytes.ReplaceAll(buf, []byte("\r\n"), []byte("\n"))))
 	// Output:
 	// HTTP/1.1 200 OK
 	// Connection: close

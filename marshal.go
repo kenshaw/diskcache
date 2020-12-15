@@ -51,7 +51,6 @@ func (z GzipMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
 type ZlibMarshalUnmarshaler struct {
 	// Level is the compression level.
 	Level int
-
 	// Dict is the compression dictionary.
 	Dict []byte
 }
@@ -83,7 +82,7 @@ func (z ZlibMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
 	return rd.Close()
 }
 
-// FlatMarhsalUnmarshaler is a flat file marshaler/unmarshaler, dropping
+// FlatMarshalUnmarshaler is a flat file marshaler/unmarshaler, dropping
 // original response header when marshaling.
 type FlatMarshalUnmarshaler struct {
 	// Chain is an additional MarshalUnmarshaler that the data can be sent to
@@ -99,7 +98,7 @@ func (z FlatMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
 		return err
 	}
 	buf := b.Bytes()
-	i := bytes.Index(buf, append(crlf, crlf...))
+	i := bytes.Index(buf, crlfcrlf)
 	if i == -1 {
 		return errors.New("unable to find header/body boundary")
 	}

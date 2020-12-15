@@ -38,7 +38,7 @@ func (v option) cache(c *Cache) error {
 // simpleMatcher satisfies the Option interface.
 func (v option) simpleMatcher(m *SimpleMatcher) {
 	if v.m == nil {
-		panic(fmt.Sprintf("option not available for simple matcher"))
+		panic("option not available for simple matcher")
 	}
 	v.m(m)
 }
@@ -66,7 +66,7 @@ func WithMode(dirMode, fileMode os.FileMode) Option {
 
 // WithFs is a disk cache option to set the Afero filesystem used.
 //
-// See: github.com/spf13/afero
+// See: https://github.com/spf13/afero
 func WithFs(fs afero.Fs) Option {
 	return option{
 		c: func(c *Cache) error {
@@ -93,7 +93,6 @@ func WithBasePathFs(basePath string) Option {
 			case err == nil && !fi.IsDir():
 				return fmt.Errorf("base path %s is not a directory", basePath)
 			}
-
 			// resolve real path
 			basePath, err = realpath.Realpath(basePath)
 			if err != nil {
@@ -227,7 +226,7 @@ func WithBodyTransformers(bodyTransformers ...BodyTransformer) Option {
 // content minification of HTML, XML, SVG, JavaScript, JSON, and CSS data.
 // Useful for reducing disk storage sizes.
 //
-// See: github.com/tdewolff/minify
+// See: https://github.com/tdewolff/minify
 func WithMinifier() Option {
 	t := Minifier{
 		Priority: TransformPriorityMinify,
