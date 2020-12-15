@@ -1,21 +1,22 @@
-# diskcache [![GoDoc][godoc]][godoc-link]
+# diskcache [![Go Package][gopkg]][gopkg-link]
 
 Package `diskcache` provides a standard Go HTTP transport
-([`http.RoundTripper`][go-http-roundtripper]) implementation able to cache,
+([`http.RoundTripper`][go-http-roundtripper]) implementation designed to cache,
 minify, compress, and transform HTTP responses on disk. Allows definition of
 caching policies on a per-method, per-host, or per-path basis.
 
-Provides a number of content transformers that alter cached HTTP response
-headers and bodies (prior to storage on disk) including rewriting or
-white/black-listing headers, stripping XSS prefixes, Base64 encoding/decoding,
-webpage content minification, Gzip/Zlib compression, and more.
+Additionally provides header, body and content transformers that alter cached
+HTTP response headers and bodies prior to storage on disk. Includes ability to
+rewrite headers, white/black-list headers, strip XSS prefixes, Base64
+encode/decode content, minify content, and marshal/unmarshal data stored on
+disk using Go's GLib/ZLib compression.
 
-Package `diskcache` does not aim to work as a on-disk HTTP proxy. See
+Package `diskcache` _does not_ act as an on-disk HTTP proxy. Please see
 [github.com/gregjones/httpcache][httpcache] for a HTTP transport implementation
 that provides a RFC 7234 compliant cache.
 
-[godoc]: https://godoc.org/github.com/kenshaw/diskcache?status.svg (GoDoc)
-[godoc-link]: https://godoc.org/github.com/kenshaw/diskcache
+[gopkg]: https://pkg.go.dev/badge/github.com/kenshaw/diskcache.svg (Go Package)
+[gopkg-link]: https://pkg.go.dev/github.com/kenshaw/diskcache
 
 ## Example
 
@@ -52,12 +53,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	// create client using diskcache as the transport
 	cl := &http.Client{
 		Transport: d,
 	}
-
 	for i, urlstr := range []string{
 		"https://github.com/kenshaw/diskcache",      // a path that exists
 		"https://github.com/kenshaw/does-not-exist", // a path that doesn't
@@ -76,13 +75,11 @@ func grab(cl *http.Client, method, urlstr string, id int) error {
 	if err != nil {
 		return err
 	}
-
 	// execute request
 	res, err := cl.Do(req)
 	if err != nil {
 		return err
 	}
-
 	fmt.Fprintf(os.Stdout, "------------------- %s %s (%d) -------------------\n", method, urlstr, id)
 	buf, err := httputil.DumpResponse(res, true)
 	if err != nil {
@@ -96,25 +93,22 @@ func grab(cl *http.Client, method, urlstr string, id int) error {
 }
 ```
 
-See the [GoDoc listing][godoc] for more examples.
+See the [Go package documentation][gopkg] for more examples.
+
+## Afero support
+
+The [`afero` filesystem package][afero] can be used in conjunction with
+`diskcache` to satisfy advanced use-cases such as using an in-memory cache, or
+storing on a remote filesystem.
 
 ## Notes
 
-Prior to writing `diskcache`, a number of the available HTTP transports were
-were investigated to see if they could met the specific needs that `diskcache`
-was designed for. In fact, it was found that many (notably [`httpcache`][httpcache]),
-it was possible to accomplish what `diskcache` was designed for. However, it
-required additional dependencies on non-standard (or uncommon) packages,
-layering disk storage, or overcoming additional technical hurdles or obstacles
-such as non-idiomatic code/design.
-
-In short, no other packages were deemed to work "out-of-the-box", and thus
-`diskcache` was born. `diskcache` has been made public in case it proves useful
-to others.
-
-`diskcache` *SHOULD NOT* be considered ready for general use in production by
-others at this time. If you need a tried, tested, and true caching transport
-layer for Go, please use [`httpcache`][httpcache].
+Prior to writing `diskcache`, a number of HTTP transport packages were
+investigated to see if they could meet the specific needs that `diskcache` was
+designed for. There are in fact a few other transport packages that provide
+similar functionality as `diskcache` (notably [`httpcache`][httpcache]),
+however after extensive evaluation, it was decided that existing package
+implementations did not meet all requirements.
 
 [go-http-roundtripper]: https://golang.org/pkg/net/http/#RoundTripper
 [httpcache]: https://github.com/gregjones/httpcache

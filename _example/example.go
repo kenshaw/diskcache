@@ -28,12 +28,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	// create client using diskcache as the transport
 	cl := &http.Client{
 		Transport: d,
 	}
-
 	for i, urlstr := range []string{
 		"https://github.com/kenshaw/diskcache",      // a path that exists
 		"https://github.com/kenshaw/does-not-exist", // a path that doesn't
@@ -52,13 +50,11 @@ func grab(cl *http.Client, method, urlstr string, id int) error {
 	if err != nil {
 		return err
 	}
-
 	// execute request
 	res, err := cl.Do(req)
 	if err != nil {
 		return err
 	}
-
 	fmt.Fprintf(os.Stdout, "------------------- %s %s (%d) -------------------\n", method, urlstr, id)
 	buf, err := httputil.DumpResponse(res, true)
 	if err != nil {
