@@ -41,6 +41,8 @@ import (
 func main() {
 	d, err := diskcache.New(
 		// diskcache.WithFs(afero.New*(...)),
+		// diskcache.WithBasePathFs(path),
+		diskcache.WithAppCacheDir("diskcache-example"),
 		diskcache.WithTTL(365*24*time.Hour),
 		diskcache.WithHeaderWhitelist("Date", "Set-Cookie", "Content-Type"),
 		diskcache.WithHeaderTransform(
@@ -95,7 +97,7 @@ func grab(cl *http.Client, method, urlstr string, id int) error {
 
 See the [Go package documentation][gopkg] for more examples.
 
-## Afero support
+## afero support
 
 The [`afero` filesystem package][afero] can be used in conjunction with
 `diskcache` to satisfy advanced use-cases such as using an in-memory cache, or

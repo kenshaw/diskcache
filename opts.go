@@ -58,7 +58,7 @@ func WithMode(dirMode, fileMode os.FileMode) Option {
 	}
 }
 
-// WithFs is a disk cache option to set the Afero filesystem used.
+// WithFs is a disk cache option to set the afero fs used.
 //
 // See: https://github.com/spf13/afero
 func WithFs(fs afero.Fs) Option {
@@ -70,8 +70,10 @@ func WithFs(fs afero.Fs) Option {
 	}
 }
 
-// WithBasePathFs is a disk cache option to set the Afero filesystem as an
-// Afero BasePathFs.
+// WithBasePathFs is a disk cache option to set the afero fs used locked to a
+// base directory.
+//
+// See: https://github.com/spf13/afero
 func WithBasePathFs(basePath string) Option {
 	return option{
 		cache: func(c *Cache) error {
@@ -98,8 +100,10 @@ func WithBasePathFs(basePath string) Option {
 	}
 }
 
-// WithAppCacheDir is a disk cache option to set cache fs as based to the
-// user's cache directory joined with the app name and any passed paths.
+// WithAppCacheDir is a disk cache option to set the afero fs used locked to
+// the user's cache directory joined with the app name and any passed paths.
+//
+// The afero base fs directory will typically be $HOME/.cache/<app>/paths...
 func WithAppCacheDir(app string, paths ...string) Option {
 	return option{
 		cache: func(c *Cache) error {
