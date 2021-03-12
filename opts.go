@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"compress/zlib"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,36 +16,31 @@ import (
 
 // Option is a disk cache option.
 type Option interface {
-	cache(*Cache) error
-	simpleMatcher(*SimpleMatcher)
+	apply(interface{}) error
 }
 
 // option wraps setting disk cache and simple matcher options.
 type option struct {
-	c func(*Cache) error
-	m func(*SimpleMatcher)
+	cache         func(*Cache) error
+	simpleMatcher func(*SimpleMatcher)
 }
 
-// cache satisifies the Option interface.
-func (v option) cache(c *Cache) error {
-	if v.c == nil {
-		return errors.New("option not available for disk cache")
+// apply satisfies the Option interface.
+func (opt option) apply(v interface{}) error {
+	switch z := v.(type) {
+	case *Cache:
+		return opt.cache(z)
+	case *SimpleMatcher:
+		opt.simpleMatcher(z)
+		return nil
 	}
-	return v.c(c)
-}
-
-// simpleMatcher satisfies the Option interface.
-func (v option) simpleMatcher(m *SimpleMatcher) {
-	if v.m == nil {
-		panic("option not available for simple matcher")
-	}
-	v.m(m)
+	return fmt.Errorf("option not available for %T", v)
 }
 
 // WithTransport is a disk cache option to set the underlying HTTP transport.
 func WithTransport(transport http.RoundTripper) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.transport = transport
 			return nil
 		},
@@ -57,7 +51,7 @@ func WithTransport(transport http.RoundTripper) Option {
 // files and directories on disk.
 func WithMode(dirMode, fileMode os.FileMode) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.dirMode, c.fileMode = dirMode, fileMode
 			return nil
 		},
@@ -69,7 +63,7 @@ func WithMode(dirMode, fileMode os.FileMode) Option {
 // See: https://github.com/spf13/afero
 func WithFs(fs afero.Fs) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.fs = fs
 			return nil
 		},
@@ -80,7 +74,7 @@ func WithFs(fs afero.Fs) Option {
 // Afero BasePathFs.
 func WithBasePathFs(basePath string) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			// ensure path exists and is directory
 			fi, err := os.Stat(basePath)
 			switch {
@@ -104,10 +98,24 @@ func WithBasePathFs(basePath string) Option {
 	}
 }
 
+// WithAppCacheDir is a disk cache option to set cache fs as based to the
+// user's cache directory joined with the app name and any passed paths.
+func WithAppCacheDir(app string, paths ...string) Option {
+	return option{
+		cache: func(c *Cache) error {
+			dir, err := UserCacheDir(append([]string{app}, paths...)...)
+			if err != nil {
+				return err
+			}
+			return WithBasePathFs(dir).apply(c)
+		},
+	}
+}
+
 // WithMatchers is a disk cache option to set matchers.
 func WithMatchers(matchers ...Matcher) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matchers = matchers
 			return nil
 		},
@@ -118,7 +126,7 @@ func WithMatchers(matchers ...Matcher) Option {
 func WithDefaultMatcher(method, host, path, key string, opts ...Option) Option {
 	m := Match(method, host, path, key, opts...)
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			x := &Cache{noDefault: true}
 			if err := m.cache(x); err != nil {
 				return err
@@ -134,7 +142,7 @@ func WithDefaultMatcher(method, host, path, key string, opts ...Option) Option {
 // Prevents propagating settings from default matcher.
 func WithNoDefault() Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.noDefault = true
 			return nil
 		},
@@ -145,11 +153,11 @@ func WithNoDefault() Option {
 // transformers.
 func WithHeaderTransformers(headerTransformers ...HeaderTransformer) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.HeaderTransformers = headerTransformers
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.HeaderTransformers = headerTransformers
 		},
 	}
@@ -163,11 +171,11 @@ func WithHeaderBlacklist(blacklist ...string) Option {
 		panic(err)
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
 		},
 	}
@@ -181,11 +189,11 @@ func WithHeaderWhitelist(whitelist ...string) Option {
 		panic(err)
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
 		},
 	}
@@ -199,11 +207,11 @@ func WithHeaderTransform(pairs ...string) Option {
 		panic(err)
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
 		},
 	}
@@ -212,11 +220,11 @@ func WithHeaderTransform(pairs ...string) Option {
 // WithBodyTransformers is a disk cache option to set the body transformers.
 func WithBodyTransformers(bodyTransformers ...BodyTransformer) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.BodyTransformers = bodyTransformers
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = bodyTransformers
 		},
 	}
@@ -232,11 +240,11 @@ func WithMinifier() Option {
 		Priority: TransformPriorityMinify,
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -250,11 +258,11 @@ func WithTruncator(priority TransformPriority, match func(string, int, string) b
 		Match:    match,
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -270,11 +278,11 @@ func WithStatusCodeTruncator(codes ...int) Option {
 		},
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -290,11 +298,11 @@ func WithErrorTruncator() Option {
 		},
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -309,11 +317,11 @@ func WithBase64Decoder(contentTypes ...string) Option {
 		Encoding:     base64.StdEncoding,
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -330,11 +338,11 @@ func WithPrefixStripper(prefix []byte, contentTypes ...string) Option {
 		Prefix:       prefix,
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -343,11 +351,11 @@ func WithPrefixStripper(prefix []byte, contentTypes ...string) Option {
 // WithMarshalUnmarshaler is a disk cache option to set a marshaler/unmarshaler.
 func WithMarshalUnmarshaler(marshalUnmarshaler MarshalUnmarshaler) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.MarshalUnmarshaler = marshalUnmarshaler
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = marshalUnmarshaler
 		},
 	}
@@ -359,11 +367,11 @@ func WithGzipCompression() Option {
 		Level: gzip.DefaultCompression,
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
@@ -375,11 +383,11 @@ func WithZlibCompression() Option {
 		Level: zlib.DefaultCompression,
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
@@ -392,11 +400,11 @@ func WithZlibCompression() Option {
 func WithFlatStorage() Option {
 	z := FlatMarshalUnmarshaler{}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
@@ -410,11 +418,11 @@ func WithFlatStorage() Option {
 func WithFlatChain(marshalUnmarshaler MarshalUnmarshaler) Option {
 	z := FlatMarshalUnmarshaler{Chain: marshalUnmarshaler}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
@@ -443,11 +451,11 @@ func WithFlatZlibCompression() Option {
 // WithTTL is a disk cache option to set the cache policy TTL.
 func WithTTL(ttl time.Duration) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.policy.TTL = ttl
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.policy.TTL = ttl
 		},
 	}
@@ -456,11 +464,11 @@ func WithTTL(ttl time.Duration) Option {
 // WithIndexPath is a disk cache option to set the index path name.
 func WithIndexPath(indexPath string) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.indexPath = indexPath
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.indexPath = indexPath
 		},
 	}
@@ -469,11 +477,11 @@ func WithIndexPath(indexPath string) Option {
 // WithLongPathHandler is a disk cache option to set a long path handler.
 func WithLongPathHandler(longPathHandler func(string) string) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.longPathHandler = longPathHandler
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.longPathHandler = longPathHandler
 		},
 	}
@@ -482,11 +490,11 @@ func WithLongPathHandler(longPathHandler func(string) string) Option {
 // WithQueryEncoder is a disk cache option to set the query encoder.
 func WithQueryEncoder(queryEncoder func(url.Values) string) Option {
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.queryEncoder = queryEncoder
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.queryEncoder = queryEncoder
 		},
 	}
@@ -511,11 +519,11 @@ func WithQueryPrefix(prefix string, fields ...string) Option {
 		return ""
 	}
 	return option{
-		c: func(c *Cache) error {
+		cache: func(c *Cache) error {
 			c.matcher.queryEncoder = f
 			return nil
 		},
-		m: func(m *SimpleMatcher) {
+		simpleMatcher: func(m *SimpleMatcher) {
 			m.queryEncoder = f
 		},
 	}

@@ -44,7 +44,9 @@ func Match(method, host, path, key string, opts ...Option) *SimpleMatcher {
 		key:         key,
 	}
 	for _, o := range opts {
-		o.simpleMatcher(m)
+		if err := o.apply(m); err != nil {
+			panic(err)
+		}
 	}
 	return m
 }

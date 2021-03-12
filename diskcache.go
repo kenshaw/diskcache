@@ -26,7 +26,27 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
+	"github.com/yookoala/realpath"
 )
+
+// UserCacheDir returns the user's system cache dir, adding paths to the end.
+//
+// Example usage:
+//
+//	dir, err := diskcache.UserCacheDir("my-app-name")
+//	cache, err := diskcache.New(diskcache.WithBasePathFs(dir))
+//
+// Note: WithAppCacheDir should be used instead.
+func UserCacheDir(paths ...string) (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	if dir, err = realpath.Realpath(dir); err != nil {
+		return "", err
+	}
+	return filepath.Join(append([]string{dir}, paths...)...), nil
+}
 
 // Policy is a disk cache policy.
 type Policy struct {
@@ -78,7 +98,7 @@ func New(opts ...Option) (*Cache, error) {
 		),
 	}
 	for _, o := range opts {
-		if err := o.cache(c); err != nil {
+		if err := o.apply(c); err != nil {
 			return nil, err
 		}
 	}
@@ -88,7 +108,7 @@ func New(opts ...Option) (*Cache, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err = WithBasePathFs(filepath.Join(dir, "cache")).cache(c); err != nil {
+		if err = WithBasePathFs(filepath.Join(dir, "cache")).apply(c); err != nil {
 			return nil, err
 		}
 	}

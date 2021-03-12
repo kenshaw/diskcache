@@ -34,6 +34,7 @@ func ExampleNew() {
 	// create disk cache
 	d, err := diskcache.New(
 		// diskcache.WithBasePathFs("/path/to/cacheDir"),
+		diskcache.WithAppCacheDir("diskcache-test"),
 		diskcache.WithHeaderBlacklist("Set-Cookie", "Date"),
 		diskcache.WithMinifier(),
 		diskcache.WithErrorTruncator(),
