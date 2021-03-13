@@ -103,7 +103,7 @@ type Minifier struct {
 	Priority TransformPriority
 }
 
-// TransformPriority satisfies the Transformer interface.
+// TransformPriority satisfies the BodyTransformer interface.
 func (t Minifier) TransformPriority() TransformPriority {
 	return t.Priority
 }
@@ -124,21 +124,21 @@ func (t Minifier) BodyTransform(w io.Writer, r io.Reader, urlstr string, code in
 		jsonContentTypeRE.MatchString(contentType),
 		xmlContentTypeRE.MatchString(contentType):
 	}
-	z := minify.New()
-	z.AddFunc("text/html", html.Minify)
-	z.AddFunc("text/css", css.Minify)
-	z.AddFunc("image/svg+xml", svg.Minify)
-	z.AddFuncRegexp(jsContentTypeRE, js.Minify)
-	z.AddFuncRegexp(jsonContentTypeRE, json.Minify)
-	z.AddFuncRegexp(xmlContentTypeRE, xml.Minify)
+	m := minify.New()
+	m.AddFunc("text/html", html.Minify)
+	m.AddFunc("text/css", css.Minify)
+	m.AddFunc("image/svg+xml", svg.Minify)
+	m.AddFuncRegexp(jsContentTypeRE, js.Minify)
+	m.AddFuncRegexp(jsonContentTypeRE, json.Minify)
+	m.AddFuncRegexp(xmlContentTypeRE, xml.Minify)
 	if contentType == "text/html" {
 		var err error
-		z.URL, err = url.Parse(urlstr)
+		m.URL, err = url.Parse(urlstr)
 		if err != nil {
 			return false, err
 		}
 	}
-	if err := z.Minify(contentType, w, r); err != nil {
+	if err := m.Minify(contentType, w, r); err != nil {
 		return false, err
 	}
 	return true, nil
