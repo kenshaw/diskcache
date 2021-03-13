@@ -3,6 +3,7 @@ package diskcache_test
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -42,23 +43,23 @@ func ExampleNew() {
 		diskcache.WithTTL(365*24*time.Hour),
 	)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	// build and execute request
 	cl := &http.Client{Transport: d}
 	req, err := http.NewRequest("GET", s.URL+"/hello?name=ken", nil)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	res, err := cl.Do(req)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	defer res.Body.Close()
 	// dump
 	buf, err := httputil.DumpResponse(res, true)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	fmt.Println(string(bytes.ReplaceAll(buf, []byte("\r\n"), []byte("\n"))))
 	// Output:

@@ -22,7 +22,7 @@ import (
 // TransformPriority is the body transform priority.
 type TransformPriority int
 
-// Body mangle priorities.
+// Transform priorities.
 const (
 	TransformPriorityFirst  TransformPriority = 10
 	TransformPriorityDecode TransformPriority = 50
@@ -45,7 +45,8 @@ func (f HeaderTransformerFunc) HeaderTransform(buf []byte) []byte {
 	return f(buf)
 }
 
-// RegexpHeaderTransformer mangles headers matching regexps and replacements.
+// RegexpHeaderTransformer transforms headers matching regexps and
+// replacements.
 type RegexpHeaderTransformer struct {
 	Regexps []*regexp.Regexp
 	Repls   [][]byte
@@ -88,9 +89,9 @@ func (t *RegexpHeaderTransformer) HeaderTransform(buf []byte) []byte {
 type BodyTransformer interface {
 	// TransformPriority returns the order for the transformer.
 	TransformPriority() TransformPriority
-	// BodyTransform mangles data from r to w for the provided URL, status
-	// code, and content type. A return of false prevents further passing the
-	// stream to lower priority body transformers.
+	// BodyTransform transforms data read from r to w for the provided URL,
+	// status code, and content type. A return of false prevents further
+	// passing the stream to lower priority body transformers.
 	BodyTransform(w io.Writer, r io.Reader, urlstr string, code int, contentType string) (bool, error)
 }
 

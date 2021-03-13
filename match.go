@@ -1,6 +1,7 @@
 package diskcache
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -93,23 +94,22 @@ func (m *SimpleMatcher) Match(req *http.Request) (string, Policy, error) {
 	return key, m.policy, nil
 }
 
-// cache satisfies the Option interface.
-func (m *SimpleMatcher) cache(c *Cache) error {
-	if !c.noDefault {
-		if m.policy.TTL == 0 {
-			m.policy.TTL = c.matcher.policy.TTL
+// apply satisfies the Option interface.
+func (m *SimpleMatcher) apply(v interface{}) error {
+	switch z := v.(type) {
+	case *Cache:
+		if !z.noDefault {
+			if m.policy.TTL == 0 {
+				m.policy.TTL = z.matcher.policy.TTL
+			}
+			m.policy.HeaderTransformers = append(z.matcher.policy.HeaderTransformers, m.policy.HeaderTransformers...)
+			m.policy.BodyTransformers = append(z.matcher.policy.BodyTransformers, m.policy.BodyTransformers...)
+			if m.policy.MarshalUnmarshaler == nil {
+				m.policy.MarshalUnmarshaler = z.matcher.policy.MarshalUnmarshaler
+			}
 		}
-		m.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, m.policy.HeaderTransformers...)
-		m.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, m.policy.BodyTransformers...)
-		if m.policy.MarshalUnmarshaler == nil {
-			m.policy.MarshalUnmarshaler = c.matcher.policy.MarshalUnmarshaler
-		}
+		z.matchers = append(z.matchers, m)
+		return nil
 	}
-	c.matchers = append(c.matchers, m)
-	return nil
-}
-
-// simpleMatcher satisfies the Option interface.
-func (m *SimpleMatcher) simpleMatcher(*SimpleMatcher) {
-	panic("not supported")
+	return fmt.Errorf("SimpleMatcher does not apply to %T", v)
 }

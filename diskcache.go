@@ -29,38 +29,6 @@ import (
 	"github.com/yookoala/realpath"
 )
 
-// UserCacheDir returns the user's system cache dir, adding paths to the end.
-//
-// Example usage:
-//
-//	dir, err := diskcache.UserCacheDir("my-app-name")
-//	cache, err := diskcache.New(diskcache.WithBasePathFs(dir))
-//
-// Note: WithAppCacheDir should be used instead.
-func UserCacheDir(paths ...string) (string, error) {
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	if dir, err = realpath.Realpath(dir); err != nil {
-		return "", err
-	}
-	return filepath.Join(append([]string{dir}, paths...)...), nil
-}
-
-// Policy is a disk cache policy.
-type Policy struct {
-	// TTL is the time-to-live.
-	TTL time.Duration
-	// HeaderTransformers are the set of header transformers.
-	HeaderTransformers []HeaderTransformer
-	// BodyTransformers are the set of body tranformers.
-	BodyTransformers []BodyTransformer
-	// MarshalUnmarshaler is the marshal/unmarshaler responsible for storage on
-	// disk.
-	MarshalUnmarshaler MarshalUnmarshaler
-}
-
 // Cache is a http.RoundTripper compatible disk cache.
 type Cache struct {
 	transport http.RoundTripper
@@ -291,4 +259,36 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 		}
 	}
 	return http.ReadResponse(bufio.NewReader(bytes.NewReader(body)), req)
+}
+
+// Policy is a disk cache policy.
+type Policy struct {
+	// TTL is the time-to-live.
+	TTL time.Duration
+	// HeaderTransformers are the set of header transformers.
+	HeaderTransformers []HeaderTransformer
+	// BodyTransformers are the set of body tranformers.
+	BodyTransformers []BodyTransformer
+	// MarshalUnmarshaler is the marshal/unmarshaler responsible for storage on
+	// disk.
+	MarshalUnmarshaler MarshalUnmarshaler
+}
+
+// UserCacheDir returns the user's system cache dir, adding paths to the end.
+//
+// Example usage:
+//
+//	dir, err := diskcache.UserCacheDir("my-app-name")
+//	cache, err := diskcache.New(diskcache.WithBasePathFs(dir))
+//
+// Note: WithAppCacheDir should be used instead.
+func UserCacheDir(paths ...string) (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	if dir, err = realpath.Realpath(dir); err != nil {
+		return "", err
+	}
+	return filepath.Join(append([]string{dir}, paths...)...), nil
 }

@@ -132,7 +132,7 @@ func WithDefaultMatcher(method, host, path, key string, opts ...Option) Option {
 	return option{
 		cache: func(c *Cache) error {
 			x := &Cache{noDefault: true}
-			if err := m.cache(x); err != nil {
+			if err := m.apply(x); err != nil {
 				return err
 			}
 			c.matcher = x.matchers[0].(*SimpleMatcher)
