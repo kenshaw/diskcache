@@ -145,7 +145,7 @@ func (c *Cache) Evict(req *http.Request) error {
 	return c.EvictKey(key)
 }
 
-// Evict forces a cache eviction (deletion) of the specified key.
+// EvictKey forces a cache eviction (deletion) of the specified key.
 func (c *Cache) EvictKey(key string) error {
 	return c.fs.Remove(key)
 }
@@ -164,8 +164,7 @@ func (c *Cache) Stale(key string, ttl time.Duration) (bool, error) {
 	return ttl != 0 && time.Now().After(fi.ModTime().Add(ttl)), nil
 }
 
-// Cached returns whether or not the request is cached or not. Wraps Match,
-// Stale.
+// Cached returns whether or not the request is cached. Wraps Match, Stale.
 func (c *Cache) Cached(req *http.Request) (bool, error) {
 	key, p, err := c.Match(req)
 	if err != nil {
@@ -203,7 +202,7 @@ func (c *Cache) Load(key string, p Policy, req *http.Request) (*http.Response, e
 	return http.ReadResponse(bufio.NewReader(r), req)
 }
 
-// Exec executes the request storing the response using the provided key and
+// Exec executes the request, storing the response using the provided key and
 // cache policy. Applies header and body transformers, before marshaling and
 // the response.
 func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, error) {
@@ -217,11 +216,12 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 		return nil, err
 	}
 	defer res.Body.Close()
-	// dump and apply header tranforms
+	// dump
 	buf, err := httputil.DumpResponse(res, false)
 	if err != nil {
 		return nil, err
 	}
+	// strip Transfer-Encoding and apply header transforms
 	buf = stripTransferEncodingHeader(buf)
 	for _, t := range p.HeaderTransformers {
 		buf = t.HeaderTransform(buf)

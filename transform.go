@@ -133,8 +133,7 @@ func (t Minifier) BodyTransform(w io.Writer, r io.Reader, urlstr string, code in
 	m.AddFuncRegexp(xmlContentTypeRE, xml.Minify)
 	if contentType == "text/html" {
 		var err error
-		m.URL, err = url.Parse(urlstr)
-		if err != nil {
+		if m.URL, err = url.Parse(urlstr); err != nil {
 			return false, err
 		}
 	}
