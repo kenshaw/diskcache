@@ -128,7 +128,7 @@ func WithMatchers(matchers ...Matcher) Option {
 
 // WithDefaultMatcher is a disk cache option to set the default matcher.
 func WithDefaultMatcher(method, host, path, key string, opts ...Option) Option {
-	m := Match(method, host, path, key, opts...)
+	m := Match(method, host, path, key, opts...).(*SimpleMatcher)
 	return option{
 		cache: func(c *Cache) error {
 			x := &Cache{noDefault: true}

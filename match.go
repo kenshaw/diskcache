@@ -31,13 +31,23 @@ type SimpleMatcher struct {
 	policy          Policy
 }
 
-// Match creates a new simple match for the provided method, host, path, and
-// substitution key string.
-func Match(method, host, path, key string, opts ...Option) *SimpleMatcher {
-	hostRE := regexp.MustCompile(host)
-	pathRE := regexp.MustCompile(path)
+// NewSimpleMatcher creates a simple matcher for the provided method, host and
+// path regular expressions, substitution key string, and other options.
+func NewSimpleMatcher(method, host, path, key string, opts ...Option) (*SimpleMatcher, error) {
+	methodGlob, err := glob.Compile(method, ',')
+	if err != nil {
+		return nil, err
+	}
+	hostRE, err := regexp.Compile(host)
+	if err != nil {
+		return nil, err
+	}
+	pathRE, err := regexp.Compile(path)
+	if err != nil {
+		return nil, err
+	}
 	m := &SimpleMatcher{
-		method:      glob.MustCompile(method, ','),
+		method:      methodGlob,
 		host:        hostRE,
 		hostSubexps: hostRE.SubexpNames(),
 		path:        pathRE,
@@ -46,8 +56,18 @@ func Match(method, host, path, key string, opts ...Option) *SimpleMatcher {
 	}
 	for _, o := range opts {
 		if err := o.apply(m); err != nil {
-			panic(err)
+			return nil, err
 		}
+	}
+	return m, nil
+}
+
+// Match creates a simple matcher for the provided method, host and path
+// regular expressions, and substitution key string. Wraps NewSimpleMatcher.
+func Match(method, host, path, key string, opts ...Option) Matcher {
+	m, err := NewSimpleMatcher(method, host, path, key, opts...)
+	if err != nil {
+		panic(err)
 	}
 	return m
 }

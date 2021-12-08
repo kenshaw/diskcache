@@ -47,23 +47,27 @@ type Cache struct {
 // By default, the cache path will be <working directory>/cache. Change
 // location using options.
 func New(opts ...Option) (*Cache, error) {
+	m, err := NewSimpleMatcher(
+		`GET`,
+		`^(?P<proto>https?)://(?P<host>[^:]+)(?P<port>:[0-9]+)?$`,
+		`^/?(?P<path>.*)$`,
+		`{{proto}}/{{host}}{{port}}/{{path}}{{query}}`,
+		WithIndexPath("?index"),
+		WithQueryPrefix("_"),
+		WithLongPathHandler(func(key string) string {
+			if len(key) > 128 {
+				return fmt.Sprintf("?long/%x", sha256.Sum256([]byte(key)))
+			}
+			return key
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
 	c := &Cache{
 		dirMode:  0o755,
 		fileMode: 0o644,
-		matcher: Match(
-			`GET`,
-			`^(?P<proto>https?)://(?P<host>[^:]+)(?P<port>:[0-9]+)?$`,
-			`^/?(?P<path>.*)$`,
-			`{{proto}}/{{host}}{{port}}/{{path}}{{query}}`,
-			WithIndexPath("?index"),
-			WithQueryPrefix("_"),
-			WithLongPathHandler(func(key string) string {
-				if len(key) > 128 {
-					return fmt.Sprintf("?long/%x", sha256.Sum256([]byte(key)))
-				}
-				return key
-			}),
-		),
+		matcher:  m,
 	}
 	for _, o := range opts {
 		if err := o.apply(c); err != nil {
