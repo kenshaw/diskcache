@@ -33,6 +33,26 @@ type SimpleMatcher struct {
 
 // NewSimpleMatcher creates a simple matcher for the provided method, host and
 // path regular expressions, substitution key string, and other options.
+//
+// Example:
+//
+//	m, err := NewSimpleMatcher(
+//		`GET`,
+//		`^(?P<proto>https?)://(?P<host>[^:]+)(?P<port>:[0-9]+)?$`,
+//		`^/?(?P<path>.*)$`,
+//		`{{proto}}/{{host}}{{port}}/{{path}}{{query}}`,
+//		WithIndexPath("?index"),
+//		WithQueryPrefix("_"),
+//		WithLongPathHandler(func(key string) string {
+//			if len(key) > 128 {
+//				return fmt.Sprintf("?long/%x", sha256.Sum256([]byte(key)))
+//			}
+//			return key
+//		}),
+//	)
+//	if err != nil {
+//		return nil, err
+//	}
 func NewSimpleMatcher(method, host, path, key string, opts ...Option) (*SimpleMatcher, error) {
 	methodGlob, err := glob.Compile(method, ',')
 	if err != nil {
