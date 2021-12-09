@@ -14,9 +14,10 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"io/fs"
 	"net/http"
 	"net/http/httputil"
 	"os"
@@ -80,7 +81,7 @@ func New(opts ...Option) (*Cache, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err = WithBasePathFs(filepath.Join(dir, "cache")).apply(c); err != nil {
+		if err := WithBasePathFs(filepath.Join(dir, "cache")).apply(c); err != nil {
 			return nil, err
 		}
 	}
@@ -99,6 +100,7 @@ func New(opts ...Option) (*Cache, error) {
 
 // RoundTrip satisfies the http.RoundTripper interface.
 func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
+	// match policy for the request
 	key, p, err := c.Match(req)
 	if err != nil {
 		return nil, err
@@ -111,15 +113,31 @@ func (c *Cache) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		return transport.RoundTrip(req)
 	}
-	// check stale
-	stale, err := c.Stale(key, p.TTL)
-	if err != nil {
-		return nil, err
+	force := false
+	for {
+		// fetch
+		stale, mod, res, err := c.Fetch(key, p, req, force)
+		switch {
+		case err != nil:
+			return nil, err
+		case p.Validator == nil:
+			return res, nil
+		}
+		// validate response
+		validity, err := p.Validator.Validate(req, res, mod, stale)
+		switch {
+		case err != nil:
+			return nil, err
+		case validity == Error:
+			return nil, fmt.Errorf("%T returned no error, but returned Error validity", p.Validator)
+		case validity == Retry:
+			force = true
+		case validity == Valid:
+			return res, nil
+		default:
+			return nil, fmt.Errorf("unable to handle %T validity %d", p.Validator, validity)
+		}
 	}
-	if stale {
-		return c.Exec(key, p, req)
-	}
-	return c.Load(key, p, req)
 }
 
 // Match finds the first matching cache policy for the request.
@@ -154,18 +172,56 @@ func (c *Cache) EvictKey(key string) error {
 	return c.fs.Remove(key)
 }
 
-// Stale indicates whether or not the key is stale, based on the passed ttl.
-func (c *Cache) Stale(key string, ttl time.Duration) (bool, error) {
+// Fetch retrieves the key from the cache based on the policy TTL. When forced,
+// or if the cached response is stale the request will be executed and cached.
+func (c *Cache) Fetch(key string, p Policy, req *http.Request, force bool) (bool, time.Time, *http.Response, error) {
+	// check stale
+	stale, mod, err := c.Stale(key, p.TTL)
+	if err != nil {
+		return false, time.Time{}, nil, err
+	}
+	// exec when stale or forced
+	if stale || force {
+		res, err := c.Exec(key, p, req)
+		if err != nil {
+			return false, time.Time{}, nil, err
+		}
+		mod, err := c.Mod(key)
+		if err != nil {
+			return false, time.Time{}, nil, err
+		}
+		return false, mod, res, nil
+	}
+	// load
+	res, err := c.Load(key, p, req)
+	if err != nil {
+		return false, time.Time{}, nil, err
+	}
+	return true, mod, res, nil
+}
+
+// Mod returns last modified time of the key.
+func (c *Cache) Mod(key string) (time.Time, error) {
 	fi, err := c.fs.Stat(key)
 	switch {
-	case err != nil && os.IsNotExist(err):
-		return true, nil
 	case err != nil:
-		return false, err
+		return time.Time{}, err
 	case fi.IsDir():
-		return false, fmt.Errorf("fs path %q is a directory", key)
+		return time.Time{}, fmt.Errorf("fs path %q is a directory", key)
 	}
-	return ttl != 0 && time.Now().After(fi.ModTime().Add(ttl)), nil
+	return fi.ModTime(), nil
+}
+
+// Stale returns whether or not the key is stale, based on ttl.
+func (c *Cache) Stale(key string, ttl time.Duration) (bool, time.Time, error) {
+	mod, err := c.Mod(key)
+	switch {
+	case err != nil && errors.Is(err, fs.ErrNotExist):
+		return true, mod, nil
+	case err != nil:
+		return false, time.Time{}, err
+	}
+	return ttl != 0 && time.Now().After(mod.Add(ttl)), mod, nil
 }
 
 // Cached returns whether or not the request is cached. Wraps Match, Stale.
@@ -174,31 +230,24 @@ func (c *Cache) Cached(req *http.Request) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	stale, err := c.Stale(key, p.TTL)
+	stale, _, err := c.Stale(key, p.TTL)
 	if err != nil {
 		return false, err
 	}
 	return !stale, nil
 }
 
-// Load unmarshals and loads the cached response for the provided key and cache
-// policy.
+// Load unmarshals and loads the cached response for the key and cache policy.
 func (c *Cache) Load(key string, p Policy, req *http.Request) (*http.Response, error) {
 	f, err := c.fs.OpenFile(key, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	var r io.Reader
-	if p.MarshalUnmarshaler == nil {
-		buf, err := ioutil.ReadAll(f)
-		if err != nil {
-			return nil, err
-		}
-		r = bytes.NewReader(buf)
-	} else {
+	var r io.Reader = f
+	if p.MarshalUnmarshaler != nil {
 		buf := new(bytes.Buffer)
-		if err = p.MarshalUnmarshaler.Unmarshal(buf, f); err != nil {
+		if err := p.MarshalUnmarshaler.Unmarshal(buf, f); err != nil {
 			return nil, err
 		}
 		r = buf
@@ -206,9 +255,9 @@ func (c *Cache) Load(key string, p Policy, req *http.Request) (*http.Response, e
 	return http.ReadResponse(bufio.NewReader(r), req)
 }
 
-// Exec executes the request, storing the response using the provided key and
-// cache policy. Applies header and body transformers, before marshaling and
-// the response.
+// Exec executes the request, storing the response using the key and cache
+// policy. Applies header and body transformers, before marshaling and the
+// response.
 func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, error) {
 	transport := c.transport
 	if transport == nil {
@@ -239,7 +288,7 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 	// marshal
 	if p.MarshalUnmarshaler != nil {
 		b := new(bytes.Buffer)
-		if err = p.MarshalUnmarshaler.Marshal(b, bytes.NewReader(buf)); err != nil {
+		if err := p.MarshalUnmarshaler.Marshal(b, bytes.NewReader(buf)); err != nil {
 			return nil, err
 		}
 		buf = b.Bytes()
@@ -247,7 +296,7 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 	// store
 	if len(buf) != 0 {
 		// ensure path exists
-		if err = c.fs.MkdirAll(path.Dir(key), c.dirMode); err != nil {
+		if err := c.fs.MkdirAll(path.Dir(key), c.dirMode); err != nil {
 			return nil, err
 		}
 		// open cache file
@@ -255,13 +304,14 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 		if err != nil {
 			return nil, err
 		}
-		if _, err = f.Write(buf); err != nil {
+		if _, err := f.Write(buf); err != nil {
 			return nil, err
 		}
-		if err = f.Close(); err != nil {
+		if err := f.Close(); err != nil {
 			return nil, err
 		}
 	}
+	// read response
 	return http.ReadResponse(bufio.NewReader(bytes.NewReader(body)), req)
 }
 
@@ -276,6 +326,8 @@ type Policy struct {
 	// MarshalUnmarshaler is the marshal/unmarshaler responsible for storage on
 	// disk.
 	MarshalUnmarshaler MarshalUnmarshaler
+	// Validator validates responses.
+	Validator Validator
 }
 
 // UserCacheDir returns the user's system cache dir, adding paths to the end.
@@ -285,7 +337,7 @@ type Policy struct {
 //	dir, err := diskcache.UserCacheDir("my-app-name")
 //	cache, err := diskcache.New(diskcache.WithBasePathFs(dir))
 //
-// Note: WithAppCacheDir should be used instead.
+// Note: WithAppCacheDir is easier.
 func UserCacheDir(paths ...string) (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {

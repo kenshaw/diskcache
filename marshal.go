@@ -26,10 +26,10 @@ func (z GzipMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if _, err = io.Copy(wr, r); err != nil {
+	if _, err := io.Copy(wr, r); err != nil {
 		return err
 	}
-	if err = wr.Flush(); err != nil {
+	if err := wr.Flush(); err != nil {
 		return err
 	}
 	return wr.Close()
@@ -41,7 +41,7 @@ func (z GzipMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if _, err = io.Copy(w, rd); err != nil {
+	if _, err := io.Copy(w, rd); err != nil {
 		return err
 	}
 	return rd.Close()
@@ -61,10 +61,10 @@ func (z ZlibMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if _, err = io.Copy(wr, r); err != nil {
+	if _, err := io.Copy(wr, r); err != nil {
 		return err
 	}
-	if err = wr.Flush(); err != nil {
+	if err := wr.Flush(); err != nil {
 		return err
 	}
 	return wr.Close()
@@ -76,7 +76,7 @@ func (z ZlibMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if _, err = io.Copy(w, rd); err != nil {
+	if _, err := io.Copy(w, rd); err != nil {
 		return err
 	}
 	return rd.Close()
@@ -92,9 +92,8 @@ type FlatMarshalUnmarshaler struct {
 
 // Marshal satisfies the MarshalUnmarshaler interface.
 func (z FlatMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
-	var err error
 	b := new(bytes.Buffer)
-	if _, err = io.Copy(b, r); err != nil {
+	if _, err := io.Copy(b, r); err != nil {
 		return err
 	}
 	buf := b.Bytes()
@@ -103,7 +102,7 @@ func (z FlatMarshalUnmarshaler) Marshal(w io.Writer, r io.Reader) error {
 		return errors.New("unable to find header/body boundary")
 	}
 	if z.Chain == nil {
-		_, err = w.Write(buf[i+4:])
+		_, err := w.Write(buf[i+4:])
 		return err
 	}
 	return z.Chain.Marshal(w, bytes.NewReader(buf[i+4:]))
@@ -118,10 +117,9 @@ func (z FlatMarshalUnmarshaler) Unmarshal(w io.Writer, r io.Reader) error {
 		}
 		r = b
 	}
-	_, err := w.Write(httpHeader)
-	if err != nil {
+	if _, err := w.Write(httpHeader); err != nil {
 		return err
 	}
-	_, err = io.Copy(w, r)
+	_, err := io.Copy(w, r)
 	return err
 }

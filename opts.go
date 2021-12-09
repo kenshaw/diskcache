@@ -4,7 +4,9 @@ import (
 	"compress/gzip"
 	"compress/zlib"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,8 +23,8 @@ type Option interface {
 
 // option wraps setting disk cache and simple matcher options.
 type option struct {
-	cache         func(*Cache) error
-	simpleMatcher func(*SimpleMatcher)
+	cache   func(*Cache) error
+	matcher func(*SimpleMatcher)
 }
 
 // apply satisfies the Option interface.
@@ -31,10 +33,10 @@ func (opt option) apply(v interface{}) error {
 	case *Cache:
 		return opt.cache(z)
 	case *SimpleMatcher:
-		opt.simpleMatcher(z)
+		opt.matcher(z)
 		return nil
 	}
-	return fmt.Errorf("option not available for %T", v)
+	return fmt.Errorf("option cannot be used with %T", v)
 }
 
 // WithTransport is a disk cache option to set the underlying HTTP transport.
@@ -80,8 +82,8 @@ func WithBasePathFs(basePath string) Option {
 			// ensure path exists and is directory
 			fi, err := os.Stat(basePath)
 			switch {
-			case err != nil && os.IsNotExist(err):
-				if err = os.MkdirAll(basePath, c.dirMode); err != nil {
+			case err != nil && errors.Is(err, fs.ErrNotExist):
+				if err := os.MkdirAll(basePath, c.dirMode); err != nil {
 					return err
 				}
 			case err != nil:
@@ -90,8 +92,7 @@ func WithBasePathFs(basePath string) Option {
 				return fmt.Errorf("base path %s is not a directory", basePath)
 			}
 			// resolve real path
-			basePath, err = realpath.Realpath(basePath)
-			if err != nil {
+			if basePath, err = realpath.Realpath(basePath); err != nil {
 				return err
 			}
 			c.fs = afero.NewBasePathFs(afero.NewOsFs(), basePath)
@@ -164,7 +165,7 @@ func WithHeaderTransformers(headerTransformers ...HeaderTransformer) Option {
 			c.matcher.policy.HeaderTransformers = headerTransformers
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.HeaderTransformers = headerTransformers
 		},
 	}
@@ -182,7 +183,7 @@ func WithHeaderBlacklist(blacklist ...string) Option {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
 		},
 	}
@@ -200,7 +201,7 @@ func WithHeaderWhitelist(whitelist ...string) Option {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
 		},
 	}
@@ -218,7 +219,7 @@ func WithHeaderTransform(pairs ...string) Option {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
 		},
 	}
@@ -231,7 +232,7 @@ func WithBodyTransformers(bodyTransformers ...BodyTransformer) Option {
 			c.matcher.policy.BodyTransformers = bodyTransformers
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = bodyTransformers
 		},
 	}
@@ -251,7 +252,7 @@ func WithMinifier() Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -269,7 +270,7 @@ func WithTruncator(priority TransformPriority, match func(string, int, string) b
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -277,11 +278,11 @@ func WithTruncator(priority TransformPriority, match func(string, int, string) b
 
 // WithStatusCodeTrunactor is a disk cache option to add a body transformer
 // that truncates responses when the status code is not in the provided list.
-func WithStatusCodeTruncator(codes ...int) Option {
+func WithStatusCodeTruncator(statusCodes ...int) Option {
 	t := Truncator{
 		Priority: TransformPriorityFirst,
-		Match: func(_ string, code int, _ string) bool {
-			return !intcontains(codes, code)
+		Match: func(_ string, statusCode int, _ string) bool {
+			return !containsInt(statusCodes, statusCode)
 		},
 	}
 	return option{
@@ -289,7 +290,7 @@ func WithStatusCodeTruncator(codes ...int) Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -309,7 +310,7 @@ func WithErrorTruncator() Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -328,7 +329,7 @@ func WithBase64Decoder(contentTypes ...string) Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -349,7 +350,7 @@ func WithPrefixStripper(prefix []byte, contentTypes ...string) Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
 		},
 	}
@@ -362,7 +363,7 @@ func WithMarshalUnmarshaler(marshalUnmarshaler MarshalUnmarshaler) Option {
 			c.matcher.policy.MarshalUnmarshaler = marshalUnmarshaler
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = marshalUnmarshaler
 		},
 	}
@@ -378,7 +379,7 @@ func WithGzipCompression() Option {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
@@ -394,7 +395,7 @@ func WithZlibCompression() Option {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
@@ -411,7 +412,7 @@ func WithFlatStorage() Option {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
@@ -429,7 +430,7 @@ func WithFlatChain(marshalUnmarshaler MarshalUnmarshaler) Option {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.MarshalUnmarshaler = z
 		},
 	}
@@ -462,7 +463,7 @@ func WithTTL(ttl time.Duration) Option {
 			c.matcher.policy.TTL = ttl
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.policy.TTL = ttl
 		},
 	}
@@ -475,7 +476,7 @@ func WithIndexPath(indexPath string) Option {
 			c.matcher.indexPath = indexPath
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.indexPath = indexPath
 		},
 	}
@@ -488,7 +489,7 @@ func WithLongPathHandler(longPathHandler func(string) string) Option {
 			c.matcher.longPathHandler = longPathHandler
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.longPathHandler = longPathHandler
 		},
 	}
@@ -501,7 +502,7 @@ func WithQueryEncoder(queryEncoder func(url.Values) string) Option {
 			c.matcher.queryEncoder = queryEncoder
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.queryEncoder = queryEncoder
 		},
 	}
@@ -530,8 +531,57 @@ func WithQueryPrefix(prefix string, fields ...string) Option {
 			c.matcher.queryEncoder = f
 			return nil
 		},
-		simpleMatcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) {
 			m.queryEncoder = f
 		},
 	}
+}
+
+// WithValidator is a disk cache option to set the cache policy validator.
+func WithValidator(validator Validator) Option {
+	return option{
+		cache: func(c *Cache) error {
+			c.matcher.policy.Validator = validator
+			return nil
+		},
+		matcher: func(m *SimpleMatcher) {
+			m.policy.Validator = validator
+		},
+	}
+}
+
+// WithValidatorFunc is a disk cache option to set the cache policy validator.
+func WithValidatorFunc(f ValidatorFunc) Option {
+	validator := NewSimpleValidator(f)
+	return option{
+		cache: func(c *Cache) error {
+			c.matcher.policy.Validator = validator
+			return nil
+		},
+		matcher: func(m *SimpleMatcher) {
+			m.policy.Validator = validator
+		},
+	}
+}
+
+// WithContentTypeTTL is a disk cache option to set the cache policy TTL for
+// matching content types.
+func WithContentTypeTTL(ttl time.Duration, contentTypes ...string) Option {
+	return WithValidatorFunc(func(_ *http.Request, res *http.Response, mod time.Time, _ bool, _ int) (Validity, error) {
+		if ttl != 0 && time.Now().After(mod.Add(ttl)) && contains(contentTypes, res.Header.Get("Content-Type")) {
+			return Retry, nil
+		}
+		return Valid, nil
+	})
+}
+
+// WithRetryStatusCode is a disk cache option to add a validator to the cache
+// policy that retries when the response status is not the expected status.
+func WithRetryStatusCode(retries int, expected ...int) Option {
+	return WithValidatorFunc(func(_ *http.Request, res *http.Response, mod time.Time, _ bool, count int) (Validity, error) {
+		if retries < count && !containsInt(expected, res.StatusCode) {
+			return Retry, nil
+		}
+		return Valid, nil
+	})
 }
