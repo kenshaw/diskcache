@@ -243,7 +243,6 @@ func (c *Cache) Load(key string, p Policy, req *http.Request) (*http.Response, e
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	var r io.Reader = f
 	if p.MarshalUnmarshaler != nil {
 		buf := new(bytes.Buffer)
