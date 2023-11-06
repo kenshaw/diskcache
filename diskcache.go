@@ -13,6 +13,7 @@ package diskcache
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -176,7 +177,7 @@ func (c *Cache) EvictKey(key string) error {
 // or if the cached response is stale the request will be executed and cached.
 func (c *Cache) Fetch(key string, p Policy, req *http.Request, force bool) (bool, time.Time, *http.Response, error) {
 	// check stale
-	stale, mod, err := c.Stale(key, p.TTL)
+	stale, mod, err := c.Stale(req.Context(), key, p.TTL)
 	if err != nil {
 		return false, time.Time{}, nil, err
 	}
@@ -213,13 +214,16 @@ func (c *Cache) Mod(key string) (time.Time, error) {
 }
 
 // Stale returns whether or not the key is stale, based on ttl.
-func (c *Cache) Stale(key string, ttl time.Duration) (bool, time.Time, error) {
+func (c *Cache) Stale(ctx context.Context, key string, ttl time.Duration) (bool, time.Time, error) {
 	mod, err := c.Mod(key)
 	switch {
 	case err != nil && errors.Is(err, fs.ErrNotExist):
 		return true, mod, nil
 	case err != nil:
 		return false, time.Time{}, err
+	}
+	if d, ok := TTL(ctx); ok {
+		ttl = d
 	}
 	return ttl != 0 && time.Now().After(mod.Add(ttl)), mod, nil
 }
@@ -230,7 +234,7 @@ func (c *Cache) Cached(req *http.Request) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	stale, _, err := c.Stale(key, p.TTL)
+	stale, _, err := c.Stale(req.Context(), key, p.TTL)
 	if err != nil {
 		return false, err
 	}
@@ -346,4 +350,23 @@ func UserCacheDir(paths ...string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(append([]string{dir}, paths...)...), nil
+}
+
+// contextKey is a context key.
+type contextKey string
+
+// context keys.
+const (
+	ttlKey contextKey = "ttl"
+)
+
+// WithContextTTL adds the ttl to the context.
+func WithContextTTL(parent context.Context, ttl time.Duration) context.Context {
+	return context.WithValue(parent, ttlKey, ttl)
+}
+
+// TTL returns the ttl from the context.
+func TTL(ctx context.Context) (time.Duration, bool) {
+	ttl, ok := ctx.Value(ttlKey).(time.Duration)
+	return ttl, ok
 }
