@@ -12,9 +12,9 @@ import (
 	"github.com/kenshaw/diskcache"
 )
 
-// ExampleNew demonstrates setting up a simple diskcache for use with a
+// Example demonstrates setting up a simple diskcache for use with a
 // http.Client.
-func ExampleNew() {
+func Example() {
 	// set up simple test server for demonstration
 	s := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		res.Header().Set("content-type", "text/html")
