@@ -1,6 +1,6 @@
 module github.com/kenshaw/diskcache
 
-go 1.22
+go 1.23
 
 require (
 	github.com/gobwas/glob v0.2.3
