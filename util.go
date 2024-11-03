@@ -82,7 +82,7 @@ func compileHeaderRegexps(suffix string, headers ...string) ([]*regexp.Regexp, e
 
 // transformAndAppend walks the body transformer chain, applying each
 // successive body transformer.
-func transformAndAppend(buf []byte, r io.Reader, urlstr string, code int, contentType string, bodyTransformers ...BodyTransformer) ([]byte, error) {
+func transformAndAppend(buf []byte, r io.Reader, urlstr string, code int, contentType string, stripContentLength bool, bodyTransformers ...BodyTransformer) ([]byte, error) {
 	for _, m := range bodyTransformers {
 		w := new(bytes.Buffer)
 		success, err := m.BodyTransform(w, r, urlstr, code, contentType)
@@ -98,7 +98,10 @@ func transformAndAppend(buf []byte, r io.Reader, urlstr string, code int, conten
 	if _, err := io.Copy(body, r); err != nil {
 		return nil, err
 	}
-	return append(stripContentLengthHeader(buf), body.Bytes()...), nil
+	if stripContentLength {
+		return append(stripContentLengthHeader(buf), body.Bytes()...), nil
+	}
+	return append(buf, body.Bytes()...), nil
 }
 
 // contains determines if haystack contains needle.

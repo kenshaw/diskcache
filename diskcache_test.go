@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,6 +59,56 @@ func TestWithContextTTL(t *testing.T) {
 			t.Errorf("expected %d, got: %d", i+1, v)
 		}
 		<-time.After(2 * time.Millisecond)
+	}
+}
+
+func TestWithMethod(t *testing.T) {
+	// set up simple test server for demonstration
+	var count uint64
+	const size = 20000
+	s := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+		if req.Method == "HEAD" {
+			res.Header().Add("Content-Length", strconv.Itoa(size))
+		} else {
+			fmt.Fprintf(res, "%d\n", atomic.AddUint64(&count, 1))
+		}
+	}))
+	defer s.Close()
+	baseDir := setupDir(t, "test-with-method")
+	// create disk cache
+	c, err := New(
+		WithBasePathFs(baseDir),
+		WithMethod("GET", "HEAD"),
+		WithErrorTruncator(),
+		WithTTL(1*time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	cl := &http.Client{
+		Transport: c,
+	}
+	ctx := context.Background()
+	for i := range 5 {
+		req, err := http.NewRequestWithContext(ctx, "HEAD", s.URL, nil)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		res, err := cl.Do(req)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		buf, err := httputil.DumpResponse(res, true)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		t.Logf("%d:\n%s\n---", i, string(buf))
+		if res.ContentLength != size {
+			t.Errorf("response %d expected size %d, got: %d", i, size, res.ContentLength)
+		}
+	}
+	if count != 0 {
+		t.Errorf("expected count %d, got: %d", 0, count)
 	}
 }
 

@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/gobwas/glob"
 	"github.com/spf13/afero"
 	"github.com/yookoala/realpath"
 )
@@ -24,7 +26,7 @@ type Option interface {
 // option wraps setting disk cache and simple matcher options.
 type option struct {
 	cache   func(*Cache) error
-	matcher func(*SimpleMatcher)
+	matcher func(*SimpleMatcher) error
 }
 
 // apply satisfies the Option interface.
@@ -33,10 +35,23 @@ func (opt option) apply(v interface{}) error {
 	case *Cache:
 		return opt.cache(z)
 	case *SimpleMatcher:
-		opt.matcher(z)
-		return nil
+		return opt.matcher(z)
 	}
 	return fmt.Errorf("option cannot be used with %T", v)
+}
+
+// WithMethod is a disk cache option to set matching request method(s).
+func WithMethod(method ...string) Option {
+	return option{
+		cache: func(c *Cache) error {
+			return WithMethod(method...).apply(c.matcher)
+		},
+		matcher: func(m *SimpleMatcher) error {
+			var err error
+			m.method, err = glob.Compile("{"+strings.Join(method, ",")+"}", ',')
+			return err
+		},
+	}
 }
 
 // WithTransport is a disk cache option to set the underlying HTTP transport.
@@ -88,7 +103,7 @@ func WithBasePathFs(basePath string) Option {
 				}
 			case err != nil:
 				return err
-			case err == nil && !fi.IsDir():
+			case !fi.IsDir():
 				return fmt.Errorf("base path %s is not a directory", basePath)
 			}
 			// resolve real path
@@ -165,8 +180,9 @@ func WithHeaderTransformers(headerTransformers ...HeaderTransformer) Option {
 			c.matcher.policy.HeaderTransformers = headerTransformers
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.HeaderTransformers = headerTransformers
+			return nil
 		},
 	}
 }
@@ -183,8 +199,9 @@ func WithHeaderBlacklist(blacklist ...string) Option {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
+			return nil
 		},
 	}
 }
@@ -201,8 +218,9 @@ func WithHeaderWhitelist(whitelist ...string) Option {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
+			return nil
 		},
 	}
 }
@@ -219,8 +237,9 @@ func WithHeaderTransform(pairs ...string) Option {
 			c.matcher.policy.HeaderTransformers = append(c.matcher.policy.HeaderTransformers, headerTransformer)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.HeaderTransformers = append(m.policy.HeaderTransformers, headerTransformer)
+			return nil
 		},
 	}
 }
@@ -232,8 +251,9 @@ func WithBodyTransformers(bodyTransformers ...BodyTransformer) Option {
 			c.matcher.policy.BodyTransformers = bodyTransformers
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.BodyTransformers = bodyTransformers
+			return nil
 		},
 	}
 }
@@ -252,8 +272,9 @@ func WithMinifier() Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
+			return nil
 		},
 	}
 }
@@ -270,8 +291,9 @@ func WithTruncator(priority TransformPriority, match func(string, int, string) b
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
+			return nil
 		},
 	}
 }
@@ -290,8 +312,9 @@ func WithStatusCodeTruncator(statusCodes ...int) Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
+			return nil
 		},
 	}
 }
@@ -310,8 +333,9 @@ func WithErrorTruncator() Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
+			return nil
 		},
 	}
 }
@@ -329,8 +353,9 @@ func WithBase64Decoder(contentTypes ...string) Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
+			return nil
 		},
 	}
 }
@@ -350,8 +375,9 @@ func WithPrefixStripper(prefix []byte, contentTypes ...string) Option {
 			c.matcher.policy.BodyTransformers = append(c.matcher.policy.BodyTransformers, t)
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.BodyTransformers = append(m.policy.BodyTransformers, t)
+			return nil
 		},
 	}
 }
@@ -363,8 +389,9 @@ func WithMarshalUnmarshaler(marshalUnmarshaler MarshalUnmarshaler) Option {
 			c.matcher.policy.MarshalUnmarshaler = marshalUnmarshaler
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.MarshalUnmarshaler = marshalUnmarshaler
+			return nil
 		},
 	}
 }
@@ -379,8 +406,9 @@ func WithGzipCompression() Option {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.MarshalUnmarshaler = z
+			return nil
 		},
 	}
 }
@@ -395,8 +423,9 @@ func WithZlibCompression() Option {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.MarshalUnmarshaler = z
+			return nil
 		},
 	}
 }
@@ -412,8 +441,9 @@ func WithFlatStorage() Option {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.MarshalUnmarshaler = z
+			return nil
 		},
 	}
 }
@@ -430,8 +460,9 @@ func WithFlatChain(marshalUnmarshaler MarshalUnmarshaler) Option {
 			c.matcher.policy.MarshalUnmarshaler = z
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.MarshalUnmarshaler = z
+			return nil
 		},
 	}
 }
@@ -463,8 +494,9 @@ func WithTTL(ttl time.Duration) Option {
 			c.matcher.policy.TTL = ttl
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.TTL = ttl
+			return nil
 		},
 	}
 }
@@ -476,8 +508,9 @@ func WithIndexPath(indexPath string) Option {
 			c.matcher.indexPath = indexPath
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.indexPath = indexPath
+			return nil
 		},
 	}
 }
@@ -489,8 +522,9 @@ func WithLongPathHandler(longPathHandler func(string) string) Option {
 			c.matcher.longPathHandler = longPathHandler
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.longPathHandler = longPathHandler
+			return nil
 		},
 	}
 }
@@ -502,8 +536,9 @@ func WithQueryEncoder(queryEncoder func(url.Values) string) Option {
 			c.matcher.queryEncoder = queryEncoder
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.queryEncoder = queryEncoder
+			return nil
 		},
 	}
 }
@@ -531,8 +566,9 @@ func WithQueryPrefix(prefix string, fields ...string) Option {
 			c.matcher.queryEncoder = f
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.queryEncoder = f
+			return nil
 		},
 	}
 }
@@ -544,8 +580,9 @@ func WithValidator(validator Validator) Option {
 			c.matcher.policy.Validator = validator
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.Validator = validator
+			return nil
 		},
 	}
 }
@@ -558,8 +595,9 @@ func WithValidatorFunc(f ValidatorFunc) Option {
 			c.matcher.policy.Validator = validator
 			return nil
 		},
-		matcher: func(m *SimpleMatcher) {
+		matcher: func(m *SimpleMatcher) error {
 			m.policy.Validator = validator
+			return nil
 		},
 	}
 }

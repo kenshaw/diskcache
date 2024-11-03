@@ -174,7 +174,8 @@ func (c *Cache) EvictKey(key string) error {
 }
 
 // Fetch retrieves the key from the cache based on the policy TTL. When forced,
-// or if the cached response is stale the request will be executed and cached.
+// or if the cached response is stale the request will be executed and the
+// response cached.
 func (c *Cache) Fetch(key string, p Policy, req *http.Request, force bool) (bool, time.Time, *http.Response, error) {
 	// check stale
 	stale, mod, err := c.Stale(req.Context(), key, p.TTL)
@@ -283,7 +284,15 @@ func (c *Cache) Exec(key string, p Policy, req *http.Request) (*http.Response, e
 		buf = t.HeaderTransform(buf)
 	}
 	// apply body transforms
-	buf, err = transformAndAppend(buf, res.Body, req.URL.String(), res.StatusCode, res.Header.Get("Content-Type"), p.BodyTransformers...)
+	buf, err = transformAndAppend(
+		buf,
+		res.Body,
+		req.URL.String(),
+		res.StatusCode,
+		res.Header.Get("Content-Type"),
+		req.Method != "HEAD",
+		p.BodyTransformers...,
+	)
 	if err != nil {
 		return nil, err
 	}
