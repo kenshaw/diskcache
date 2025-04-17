@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/tdewolff/minify/v2"
@@ -187,7 +188,7 @@ func (t Base64Decoder) BodyTransform(w io.Writer, r io.Reader, urlstr string, co
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
-	if len(t.ContentTypes) != 0 && !contains(t.ContentTypes, contentType) {
+	if len(t.ContentTypes) != 0 && !slices.Contains(t.ContentTypes, contentType) {
 		_, err := io.Copy(w, r)
 		return err == nil, err
 	}
@@ -220,7 +221,7 @@ func (t PrefixStripper) BodyTransform(w io.Writer, r io.Reader, urlstr string, c
 	if i := strings.Index(contentType, ";"); i != -1 {
 		contentType = contentType[:i]
 	}
-	if len(t.ContentTypes) != 0 && !contains(t.ContentTypes, contentType) {
+	if len(t.ContentTypes) != 0 && !slices.Contains(t.ContentTypes, contentType) {
 		_, err := io.Copy(w, r)
 		return err == nil, err
 	}

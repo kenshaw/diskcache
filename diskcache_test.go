@@ -38,7 +38,7 @@ func TestWithContextTTL(t *testing.T) {
 		Transport: c,
 	}
 	ctx := context.Background()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		v, err := doReq(ctx, cl, s.URL)
 		switch {
 		case err != nil:
@@ -51,6 +51,7 @@ func TestWithContextTTL(t *testing.T) {
 		t.Fatalf("expected count == %d, got: %d", 1, count)
 	}
 	for i := 1; i < 5; i++ {
+		<-time.After(5 * time.Millisecond)
 		v, err := doReq(WithContextTTL(ctx, 1*time.Millisecond), cl, s.URL)
 		switch {
 		case err != nil:
@@ -58,7 +59,6 @@ func TestWithContextTTL(t *testing.T) {
 		case v != i+1:
 			t.Errorf("expected %d, got: %d", i+1, v)
 		}
-		<-time.After(2 * time.Millisecond)
 	}
 }
 

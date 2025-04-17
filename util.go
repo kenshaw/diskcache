@@ -71,7 +71,7 @@ func keepHeaders(headers ...string) (HeaderTransformerFunc, error) {
 // compileHeaderRegexps compiles header regexps.
 func compileHeaderRegexps(suffix string, headers ...string) ([]*regexp.Regexp, error) {
 	regexps := make([]*regexp.Regexp, len(headers))
-	for i := 0; i < len(headers); i++ {
+	for i := range headers {
 		var err error
 		if regexps[i], err = regexp.Compile(`(?i)\r\n` + headers[i] + suffix); err != nil {
 			return nil, err
@@ -102,24 +102,4 @@ func transformAndAppend(buf []byte, r io.Reader, urlstr string, code int, conten
 		return append(stripContentLengthHeader(buf), body.Bytes()...), nil
 	}
 	return append(buf, body.Bytes()...), nil
-}
-
-// contains determines if haystack contains needle.
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
-}
-
-// containsInt determines if haystack contains needle.
-func containsInt(haystack []int, needle int) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }

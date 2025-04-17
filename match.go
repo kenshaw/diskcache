@@ -135,7 +135,7 @@ func (m *SimpleMatcher) Match(req *http.Request) (string, Policy, error) {
 }
 
 // apply satisfies the Option interface.
-func (m *SimpleMatcher) apply(v interface{}) error {
+func (m *SimpleMatcher) apply(v any) error {
 	switch z := v.(type) {
 	case *Cache:
 		if !z.noDefault {

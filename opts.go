@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 
 // Option is a disk cache option.
 type Option interface {
-	apply(interface{}) error
+	apply(any) error
 }
 
 // option wraps setting disk cache and simple matcher options.
@@ -30,7 +31,7 @@ type option struct {
 }
 
 // apply satisfies the Option interface.
-func (opt option) apply(v interface{}) error {
+func (opt option) apply(v any) error {
 	switch z := v.(type) {
 	case *Cache:
 		return opt.cache(z)
@@ -304,7 +305,7 @@ func WithStatusCodeTruncator(statusCodes ...int) Option {
 	t := Truncator{
 		Priority: TransformPriorityFirst,
 		Match: func(_ string, statusCode int, _ string) bool {
-			return !containsInt(statusCodes, statusCode)
+			return !slices.Contains(statusCodes, statusCode)
 		},
 	}
 	return option{
@@ -551,7 +552,7 @@ func WithQueryPrefix(prefix string, fields ...string) Option {
 	f := func(v url.Values) string {
 		if len(fields) > 0 {
 			for k := range v {
-				if !contains(fields, k) {
+				if !slices.Contains(fields, k) {
 					delete(v, k)
 				}
 			}
@@ -606,7 +607,7 @@ func WithValidatorFunc(f ValidatorFunc) Option {
 // matching content types.
 func WithContentTypeTTL(ttl time.Duration, contentTypes ...string) Option {
 	return WithValidatorFunc(func(_ *http.Request, res *http.Response, mod time.Time, _ bool, _ int) (Validity, error) {
-		if ttl != 0 && time.Now().After(mod.Add(ttl)) && contains(contentTypes, res.Header.Get("Content-Type")) {
+		if ttl != 0 && time.Now().After(mod.Add(ttl)) && slices.Contains(contentTypes, res.Header.Get("Content-Type")) {
 			return Retry, nil
 		}
 		return Valid, nil
@@ -617,7 +618,7 @@ func WithContentTypeTTL(ttl time.Duration, contentTypes ...string) Option {
 // policy that retries when the response status is not the expected status.
 func WithRetryStatusCode(retries int, expected ...int) Option {
 	return WithValidatorFunc(func(_ *http.Request, res *http.Response, mod time.Time, _ bool, count int) (Validity, error) {
-		if retries < count && !containsInt(expected, res.StatusCode) {
+		if retries < count && !slices.Contains(expected, res.StatusCode) {
 			return Retry, nil
 		}
 		return Valid, nil
