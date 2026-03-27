@@ -9,14 +9,12 @@ import (
 	"os"
 	"time"
 
-	// "github.com/spf13/afero"
 	"github.com/kenshaw/diskcache"
 )
 
 func main() {
 	d, err := diskcache.New(
-		// diskcache.WithFs(afero.New*(...)),
-		// diskcache.WithBasePathFs(path),
+		// diskcache.WithRoot(path),
 		diskcache.WithAppCacheDir("diskcache-example"),
 		diskcache.WithTTL(365*24*time.Hour),
 		diskcache.WithHeaderWhitelist("Date", "Set-Cookie", "Content-Type"),

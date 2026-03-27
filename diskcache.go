@@ -27,8 +27,6 @@ import (
 	"regexp"
 	"sort"
 	"time"
-
-	"github.com/spf13/afero"
 )
 
 // DefaultCacheDir is the default cache dir name used in [New].
@@ -39,7 +37,7 @@ type Cache struct {
 	transport http.RoundTripper
 	dirMode   os.FileMode
 	fileMode  os.FileMode
-	fs        afero.Fs
+	fs        *os.Root
 	noDefault bool
 	// matchers are the set of url matchers.
 	matchers []Matcher
@@ -79,13 +77,13 @@ func New(opts ...Option) (*Cache, error) {
 			return nil, err
 		}
 	}
-	// set default fs as overlay at <working directory>/cache
+	// set default fs root at <working directory>/cache
 	if c.fs == nil {
 		dir, err := os.Getwd()
 		if err != nil {
 			return nil, err
 		}
-		if err := WithBasePathFs(filepath.Join(dir, "cache")).apply(c); err != nil {
+		if err := WithRoot(filepath.Join(dir, DefaultCacheDir)).apply(c); err != nil {
 			return nil, err
 		}
 	}
@@ -356,9 +354,6 @@ type Policy struct {
 func UserCacheDir(paths ...string) (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {
-		return "", err
-	}
-	if dir, err = realpath(dir); err != nil {
 		return "", err
 	}
 	return filepath.Join(append([]string{dir}, paths...)...), nil

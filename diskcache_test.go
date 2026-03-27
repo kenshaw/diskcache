@@ -24,10 +24,10 @@ func TestWithContextTTL(t *testing.T) {
 		fmt.Fprintf(res, "%d\n", atomic.AddUint64(&count, 1))
 	}))
 	defer s.Close()
-	baseDir := setupDir(t, "test-with-context-ttl")
+	root := setupDir(t, "test-with-context-ttl")
 	// create disk cache
 	c, err := New(
-		WithBasePathFs(baseDir),
+		WithRoot(root),
 		WithErrorTruncator(),
 		WithTTL(365*24*time.Hour),
 	)
@@ -74,10 +74,10 @@ func TestWithMethod(t *testing.T) {
 		}
 	}))
 	defer s.Close()
-	baseDir := setupDir(t, "test-with-method")
+	root := setupDir(t, "test-with-method")
 	// create disk cache
 	c, err := New(
-		WithBasePathFs(baseDir),
+		WithRoot(root),
 		WithMethod("GET", "HEAD"),
 		WithErrorTruncator(),
 		WithTTL(1*time.Hour),

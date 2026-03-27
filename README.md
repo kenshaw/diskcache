@@ -15,7 +15,7 @@ Package `diskcache` _does not_ act as an on-disk HTTP proxy. Please see
 [github.com/gregjones/httpcache][httpcache] for a HTTP transport implementation
 that provides a RFC 7234 compliant cache.
 
-[gopkg]: https://pkg.go.dev/badge/github.com/kenshaw/diskcache.svg (Go Package)
+[gopkg]: https://pkg.go.dev/badge/github.com/kenshaw/diskcache.svg "Go Package"
 [gopkg-link]: https://pkg.go.dev/github.com/kenshaw/diskcache
 
 ## Example
@@ -34,13 +34,11 @@ import (
 	"os"
 	"time"
 
-	// "github.com/spf13/afero"
 	"github.com/kenshaw/diskcache"
 )
 
 func main() {
 	d, err := diskcache.New(
-		// diskcache.WithFs(afero.New*(...)),
 		// diskcache.WithBasePathFs(path),
 		diskcache.WithAppCacheDir("diskcache-example"),
 		diskcache.WithTTL(365*24*time.Hour),
@@ -97,12 +95,6 @@ func grab(cl *http.Client, method, urlstr string, id int) error {
 
 See the [Go package documentation][gopkg] for more examples.
 
-## afero support
-
-The [`afero` filesystem package][afero] can be used in conjunction with
-`diskcache` to satisfy advanced use-cases such as using an in-memory cache, or
-storing on a remote filesystem.
-
 ## Notes
 
 Prior to writing `diskcache`, a number of HTTP transport packages were
@@ -114,5 +106,4 @@ implementations did not meet all requirements.
 
 [go-http-roundtripper]: https://golang.org/pkg/net/http/#RoundTripper
 [httpcache]: https://github.com/gregjones/httpcache
-[afero]: https://github.com/spf13/afero
 [minify]: https://github.com/tdewolff/minify

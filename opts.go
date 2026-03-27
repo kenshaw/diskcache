@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gobwas/glob"
-	"github.com/spf13/afero"
 )
 
 // Option is a disk cache option.
@@ -75,43 +74,24 @@ func WithMode(dirMode, fileMode os.FileMode) Option {
 	}
 }
 
-// WithFs is a disk cache option to set the afero fs used.
-//
-// See: https://github.com/spf13/afero
-func WithFs(fs afero.Fs) Option {
-	return option{
-		cache: func(c *Cache) error {
-			c.fs = fs
-			return nil
-		},
-	}
-}
-
-// WithBasePathFs is a disk cache option to set the afero fs used locked to a
-// base directory.
-//
-// See: https://github.com/spf13/afero
-func WithBasePathFs(basePath string) Option {
+// WithRoot is a disk cache option to set the root fs used.
+func WithRoot(root string) Option {
 	return option{
 		cache: func(c *Cache) error {
 			// ensure path exists and is directory
-			fi, err := os.Stat(basePath)
-			switch {
+			switch fi, err := os.Stat(root); {
 			case err != nil && errors.Is(err, fs.ErrNotExist):
-				if err := os.MkdirAll(basePath, c.dirMode); err != nil {
+				if err := os.MkdirAll(root, c.dirMode); err != nil {
 					return err
 				}
 			case err != nil:
 				return err
 			case !fi.IsDir():
-				return fmt.Errorf("base path %s is not a directory", basePath)
+				return fmt.Errorf("base path %s is not a directory", root)
 			}
-			// resolve real path
-			if basePath, err = realpath(basePath); err != nil {
-				return err
-			}
-			c.fs = afero.NewBasePathFs(afero.NewOsFs(), basePath)
-			return nil
+			var err error
+			c.fs, err = os.OpenRoot(root)
+			return err
 		},
 	}
 }
@@ -127,7 +107,7 @@ func WithAppCacheDir(app string, paths ...string) Option {
 			if err != nil {
 				return err
 			}
-			return WithBasePathFs(dir).apply(c)
+			return WithRoot(dir).apply(c)
 		},
 	}
 }
