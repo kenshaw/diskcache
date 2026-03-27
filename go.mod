@@ -6,7 +6,6 @@ require (
 	github.com/gobwas/glob v0.2.3
 	github.com/spf13/afero v1.15.0
 	github.com/tdewolff/minify/v2 v2.24.11
-	github.com/yookoala/realpath v1.0.0
 )
 
 require (

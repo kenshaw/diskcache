@@ -24,14 +24,17 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"time"
 
 	"github.com/spf13/afero"
-	"github.com/yookoala/realpath"
 )
 
-// Cache is a http.RoundTripper compatible disk cache.
+// DefaultCacheDir is the default cache dir name used in [New].
+var DefaultCacheDir = "cache"
+
+// Cache is a [http.RoundTripper] compatible disk cache.
 type Cache struct {
 	transport http.RoundTripper
 	dirMode   os.FileMode
@@ -355,7 +358,7 @@ func UserCacheDir(paths ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if dir, err = realpath.Realpath(dir); err != nil {
+	if dir, err = realpath(dir); err != nil {
 		return "", err
 	}
 	return filepath.Join(append([]string{dir}, paths...)...), nil
@@ -378,4 +381,102 @@ func WithContextTTL(parent context.Context, ttl time.Duration) context.Context {
 func TTL(ctx context.Context) (time.Duration, bool) {
 	ttl, ok := ctx.Value(ttlKey).(time.Duration)
 	return ttl, ok
+}
+
+// various byte slices.
+var (
+	crlf       = []byte("\r\n")
+	crlfcrlf   = []byte("\r\n\r\n")
+	httpHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
+)
+
+// predefined header strip funcs.
+var (
+	stripTransferEncodingHeader func([]byte) []byte
+	stripContentLengthHeader    func([]byte) []byte
+)
+
+func init() {
+	var err error
+	stripTransferEncodingHeader, err = stripHeaders("Transfer-Encoding")
+	if err != nil {
+		panic(err)
+	}
+	stripContentLengthHeader, err = stripHeaders("Content-Length")
+	if err != nil {
+		panic(err)
+	}
+}
+
+// stripHeaders builds a func that removes matching headers.
+func stripHeaders(headers ...string) (HeaderTransformerFunc, error) {
+	regexps, err := compileHeaderRegexps(`:.+?\r\n`, headers...)
+	if err != nil {
+		return nil, err
+	}
+	return func(buf []byte) []byte {
+		for _, re := range regexps {
+			for re.Match(buf) {
+				buf = re.ReplaceAll(buf, crlf)
+			}
+		}
+		return buf
+	}, nil
+}
+
+// keepHeaders builds a func that removes all non-matching headers.
+func keepHeaders(headers ...string) (HeaderTransformerFunc, error) {
+	regexps, err := compileHeaderRegexps(`:.+?\r\n`, headers...)
+	if err != nil {
+		return nil, err
+	}
+	return func(buf []byte) []byte {
+		lines := bytes.Split(bytes.TrimSpace(buf), crlf)
+		keep := [][]byte{lines[0]}
+		for i := 1; i < len(lines); i++ {
+			for _, re := range regexps {
+				if re.Match(append(crlf, append(lines[i], crlf...)...)) {
+					keep = append(keep, lines[i])
+					break
+				}
+			}
+		}
+		return bytes.Join(append(keep, nil, nil), crlf)
+	}, nil
+}
+
+// compileHeaderRegexps compiles header regexps.
+func compileHeaderRegexps(suffix string, headers ...string) ([]*regexp.Regexp, error) {
+	regexps := make([]*regexp.Regexp, len(headers))
+	for i := range headers {
+		var err error
+		if regexps[i], err = regexp.Compile(`(?i)\r\n` + headers[i] + suffix); err != nil {
+			return nil, err
+		}
+	}
+	return regexps, nil
+}
+
+// transformAndAppend walks the body transformer chain, applying each
+// successive body transformer.
+func transformAndAppend(buf []byte, r io.Reader, urlstr string, code int, contentType string, stripContentLength bool, bodyTransformers ...BodyTransformer) ([]byte, error) {
+	for _, m := range bodyTransformers {
+		w := new(bytes.Buffer)
+		success, err := m.BodyTransform(w, r, urlstr, code, contentType)
+		if err != nil {
+			return nil, err
+		}
+		r = bytes.NewReader(w.Bytes())
+		if !success {
+			break
+		}
+	}
+	body := new(bytes.Buffer)
+	if _, err := io.Copy(body, r); err != nil {
+		return nil, err
+	}
+	if stripContentLength {
+		return append(stripContentLengthHeader(buf), body.Bytes()...), nil
+	}
+	return append(buf, body.Bytes()...), nil
 }

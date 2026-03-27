@@ -16,7 +16,6 @@ import (
 
 	"github.com/gobwas/glob"
 	"github.com/spf13/afero"
-	"github.com/yookoala/realpath"
 )
 
 // Option is a disk cache option.
@@ -108,7 +107,7 @@ func WithBasePathFs(basePath string) Option {
 				return fmt.Errorf("base path %s is not a directory", basePath)
 			}
 			// resolve real path
-			if basePath, err = realpath.Realpath(basePath); err != nil {
+			if basePath, err = realpath(basePath); err != nil {
 				return err
 			}
 			c.fs = afero.NewBasePathFs(afero.NewOsFs(), basePath)
